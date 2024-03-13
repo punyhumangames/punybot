@@ -1,0 +1,103 @@
+# Bot related configuration required for Disco to work and connect to Discord's API
+bot:
+  # Making sure not everyone can use internal bot commands
+  commands_enabled: false
+  # Enabled/Disabled modules
+  # Simply commenting out a module will disable it.
+  plugins:
+    - PunyBot.plugins.core
+    - PunyBot.plugins.media
+    - PunyBot.plugins.control
+    - PunyBot.plugins.pickup
+    - PunyBot.plugins.agreement
+    - PunyBot.plugins.kaboom
+
+# These are the intents that the bot will need when connecting to Discord's API
+# See more about intents here: https://discord.com/developers/docs/topics/gateway#gateway-intents
+# And a calculator for intents: https://discord-intents-calculator.vercel.app/
+intents: 515
+
+# Locks down bot set up related commands down to people with this role
+# comma separated list of roles.
+logging_channel: CHANNEL_ID
+
+# The apps that will show player counts in the bots status
+# **NOTE: Requires steam publisher key**
+status_apps: [225600, 17580]
+
+# Config section for the role selection menu/rules accept button.
+roles:
+ SERVER_ID:
+   select_menu:
+     - display_name: "Role 1"
+       role_id: ROLE_ID_1
+     - display_name: "Role 2"
+       role_id: ROLE_ID_2
+   rules_accepted: ROLE_ID_3
+
+#Section for any media content
+media:
+  # Subsection for twitter
+  twitter:
+    # Identifier for where the content will be served
+    # ID [Can be the server id of the guild, a name, etc.]:
+    #   url: The Webhook URL of where the content will be served. Obtained via creating a webhook in the server settings.
+    #         Typically, in the format of "https://discord.com/api/webhooks/ID/TOKEN" The portion that goes in the field is "ID/TOKEN"
+    #         Example URL: https://discord.com/api/webhooks/991465159061151765/KNP6Q4GZ0n_vY4aSh13OIz2LDv9WT3CDbuv3PkaXdP0-Q7JlicyM9GKPGlULJb9xzKlb
+    #         The value would be "991465159061151765/KNP6Q4GZ0n_vY4aSh13OIz2LDv9WT3CDbuv3PkaXdP0-Q7JlicyM9GKPGlULJb9xzKlb"
+    #   following: a list of Twitter handles that will be served to that particular webhook. Example: ["PunyHuman", "TwitterDev"] or simply ["TwitterDev"]
+    TestServer:
+      url: "ID/TOKEN"
+      following: ["PunyHuman"]
+  # Subsection for Steam
+  steam:
+    # Exact same setup as twitter.
+    # ID [Can be the server/guild ID or a text identifier]
+    #   url: Webhook url following the same format as above
+    #   apps: A comma separated list of Steam App IDs. Example: ["730", "4000"] for CSGO & Gmod
+    MainServer:
+      url: "ID/TOKEN"
+      apps: [ "225600", "356790", "17580" ]
+  # Subsection for RSS
+  rss:
+    # Key: ID of the channel in which RSS post will go into
+    # Value: A command separated list of RSS feed urls.
+    CHANNEL_1: [ "https://gamesindustry.biz/rss/gamesindustry_news_feed.rss",
+                          "https://pocketgamer.biz/rss/",
+                          "https://gamedeveloper.com/rss.xml",
+                          "https://mcvuk.com/feed/",
+                          "https://n4g.com/rss/news?channel=&sort=latest"
+    ]
+    CHANNEL_2: [ "https://www.gameinformer.com/rss.xml",
+                          "https://kotaku.com/rss",
+                          "https://feeds.feedburner.com/Destructoid-Rss",
+                          "https://www.vg247.com/feed/",
+                          "https://toucharcade.com/feed/",
+                          "https://www.bluesnews.com/news/atom.xml"
+    ]
+
+# Section for Private channel agreement
+agreement:
+  # The role ID in which users are given prior to signing the agreement
+  pre_process_role: ROLE_1
+  # The role ID in which users are then switched to after signing the agreement
+  post_process_role: ROLE_2
+
+# Section for Pick-up games.
+pickup_games:
+  # The ID of the server/guild
+  SERVER_ID:
+    # Text Identifier
+    game_1:
+      # The ID of the category in which all the voice chats will be created into
+      chat_channels_category: CATEGORY_ID
+      # The text channel where all the active game messages will be held.
+      active_games_channel: CHANNEL_ID
+      # The role that will be given/pinged for new pickup game messages.
+      lfg_role: ROLE_ID
+
+    game_2:
+      chat_channels_category: CATEGORY_ID
+      active_games_channel: CHANNEL_ID
+      lfg_role: ROLE_ID
+

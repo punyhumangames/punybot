@@ -1,0 +1,92 @@
+rules_message: |-
+  ~~--------------------~~
+  **Rule #1:** Please be generally respectful to others, and constructive during conversation.
+  **Rule #2:** No posting inappropriate content, such as nudity, gore or anything adult-themed.
+  **Rule #3:** No advertising, unless it is your own personal game stream.
+  **Rule #4:** Please keep all off-topic conversation in #shartposting, and stick to conversation related to the channel title.
+  **Rule #5:** No harmful code, applications or links.
+  **Rule #6:** No posting of user data or phishing for user data.
+  **Rule #7:** Absolutely no racist, homophobic, sexist or xenophobic terms, slurs, vernacular or epithets of any type within conversation or usernames.
+  **Rule #8:** Please speak English. If you cannot speak English, please ask for patience and help with translating.
+  We enforce the Discord Guidelines as additional server rules, see here: <https://discord.com/guidelines>
+  **These rules apply to all content posted as well as your nickname, avatar, profile, links, and so on.**
+  ~~--------------------~~
+
+  :warning: We reserve the right to mute, ban, or kick anyone, at any time, for any reason whether it is listed as a rule above or not.
+  :warning: These rules may change from time to time, and we reserve that right, but they will always be displayed in this channel.
+  :heart: This server is meant to encourage fun and a sense of community, and we want you to be a part of that!
+
+agreement_message: |-
+    Welcome to the Puny Human *Developer Plagueround* meant for awesome friends and industry folks!
+
+    In these channels, there are people who work at all manner of amazing game companies, and love sharing knowledge and discussing game development, troubleshooting or collaborating. If you want to invite someone to these channels, just let us know!
+
+    Before you have access, you must agree to a few simple confidentiality rules!
+
+    The channels in the private and hidden "Developer Plagueround" category on the official Puny Human Discord Server may occassionally provide [recepient] ("you") with information regarding game development, Puny Human, or those that have access to these channels that is sensitive and confidential ("confidential information"). In consideration for the receipt of this information, you agree:
+
+    1. You will keep the confidential information private and use it only within these channels or amongst individuals who you have verified have signed a legally binding confidentiality agreement with similar terms to these rules.
+
+    2. You will not use the confidential information for any other purposes or provide it to anyone else.
+
+    3. You may provide the confidential information to any legal counsel that represent you or your interests in order to review it.
+
+    4. You will be responsible for any breach of this rules by you or any of your representatives or legal counsel.
+
+    5. You may disclose or use the confidential information if it becomes generally available to the public other than through a breach of these rules.
+
+    6. You may disclose or use the confidential information if you are compelled to do so by a valid legally binding request.
+
+    7. You understand that we make no representation as to the accuracy of the confidential information and we shall not have any liability to you or any of your representatives with respect to the confidential information.
+
+    If you agree to these confidentiality rules, please click the button below and fill out the prompt that appears!
+
+# title - Article Title
+# url - Article URL
+# author - Who wrote the article
+# timestamp - Timestamp as an int to be used in Discord's auto-formatter
+
+rss_news_message: |-
+    :newspaper: | **[{title}](<{url}>)** {author} (<t:{timestamp}:R>)
+
+    ** {url} **
+
+pickup_message_template: |-
+    Here you will find all the active Pick-Up-Games!
+
+    A few things to note about the games found here:
+    1) There will only ever be game active per region at a time.
+    2) Once a game is listed, and at least one other player joins, a voice channel will be made for the game.
+    3) XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+
+    In order to start your own game, click the button below and answer the prompts that follow!
+
+# host_id - The id of the current pickup game "host"
+# game_region - The region the game is listed to take place in
+# server_info - Uses the template named "pickup_chat_server_information"
+# expire_timestamp - Timestamp as an int to be used in Discord's auto-formatter
+
+pickup_chat_channel_message_base: |-
+    Hello, and welcome to your Pickup-Game Chat! Here are the game details:
+    **Host**: <@{host_id}>
+    **Region** `{game_region}`{server_info}
+
+    This channel will automatically expire at <t:{expire_timestamp}:t> (<t:{expire_timestamp}:R>). A prompt will appear <t:{action_time}:R> if you need to extend the time.
+
+    *To edit the game settings, please click one of the buttons below!*
+
+# server_name - Name of the server
+# server_password - Password of the server
+pickup_chat_server_information: |-
+
+    **Server Information**:
+      __Server Name__: `{server_name}`
+      __Server Password__: ||`{server_password}`||
+
+pickup_pregame_confirm_server_info: |-
+    **Selected Region**: {region}
+    **Server Information**:
+      __Server Name__: `{server_name}`
+      __Server Password__: ||`{server_password}`||
+
+    Is all of the above correct?

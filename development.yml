@@ -1,0 +1,24 @@
+version: '3.9'
+
+services:
+  punybot: &punybot
+    build:
+      context: .
+      dockerfile: ./compose/development/phbot/Dockerfile
+    image: phbot_discordbot
+    container_name: phbot_discordbot
+    platform: linux/x86_64
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+    volumes:
+      - ./:/app:z
+#      - ./config:/app/config:z
+#      - ./data:/app/data:z
+    command: /start
+    environment:
+      DISCORD_TOKEN: ""
+      TWITTER_BEARER_TOKEN: ""
+      STEAM_API_KEY: ""

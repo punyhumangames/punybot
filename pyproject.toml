@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "punybot"
+version = "1.0.0"
+description = "Bot that was used in the PunyHuman Official Discord Server. Now open source and free to use!"
+authors = ["Justin <justin@aperturebot.science>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pyyaml = "^6.0.1"
+feedparser = "^6.0.11"
+peewee = "^3.17.1"
+python-dateutil = "^2.9.0.post0"
+python-dotenv = "^1.0.1"
+betterdisco-py = {git = "https://github.com/elderlabs/BetterDisco.git", rev = "180916b09405c8dc350aebce88c19111bfb645dd", extras = ["performance", "yaml"]}
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

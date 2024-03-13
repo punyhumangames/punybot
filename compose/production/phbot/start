@@ -1,0 +1,13 @@
+#!/bin/bash
+
+set -o errexit
+set -o pipefail
+set -o nounset
+
+# Check if config.yaml is present, if so start the bot, otherwise exit
+if [ -f config/config.yaml ]; then
+    exec python3 -m disco.cli --config config/config.yaml --token $DISCORD_TOKEN
+else
+    echo "config.yaml not found, exiting"
+    exit 1
+fi
