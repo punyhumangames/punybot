@@ -302,9 +302,9 @@ class CorePlugin(Plugin):
                     event.msg.reply("`Error:` **Topic not set, please use** `!echo <msgID> <ChannelID> <Thread_Topic>`")
                     return event.msg.add_reaction("👎")
                 msg = {'content': content, 'attachments': attachments}
-                channel_to_send_to.start_forum_thread(content=content, name=topic, attachments=attachments)
+                channel_to_send_to.start_forum_thread(content=content, name=topic, attachments=attachments,allowed_mentions={'parse': ["roles", "users", "everyone"]})
             else:
-                channel_to_send_to.send_message(content or None, attachments=attachments)
+                channel_to_send_to.send_message(content or None, attachments=attachments,allowed_mentions={'parse': ["roles", "users", "everyone"]})
         except APIException as e:
             if e.code in [50013, 50001]:
                 event.msg.add_reaction("👎")
