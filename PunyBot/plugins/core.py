@@ -101,8 +101,12 @@ class CorePlugin(Plugin):
                 self.handle_bad_requests()
                 return
 
-        self.bot.client.update_presence(Status.ONLINE,
-                                        Activity(name=f"{players} {app_name} player{'s' if players != 1 else ''}", type=ActivityTypes.WATCHING))
+        try:
+            self.bot.client.update_presence(Status.ONLINE,
+                                            Activity(name=f"{players} {app_name} player{'s' if players != 1 else ''}", type=ActivityTypes.WATCHING))
+        except Exception as e:
+            self.log.warning("[status] update_presence skipped (gateway reconnecting?): %s", e)
+            return
 
         if CONFIG.status_apps.index(self.current_status_app) == (len(CONFIG.status_apps) - 1):
             self.current_status_app = CONFIG.status_apps[0]

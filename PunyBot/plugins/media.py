@@ -227,7 +227,11 @@ class MediaPlugin(Plugin):
             # content = f"📰 | **{title}**{author or ''} (<t:{timestamp}:R>)\n\n** {sorted_feed[0]['link']} **"
 
             for channel in self.rss_config[feed_url]:
-                msg = self.bot.client.api.channels_messages_create(channel, content=content)
+                try:
+                    self.bot.client.api.channels_messages_create(channel, content=content)
+                    self.log.info("[RSS] Posted '%s' to channel %s", title, channel)
+                except Exception as e:
+                    self.log.error("[RSS] Failed to post to channel %s: %s", channel, e)
                 # If wanted to use announcement channels and have the bot auto-publish articles
                 # try:
                 #     self.bot.client.api.channels_messages_publish(channel, msg.id)
