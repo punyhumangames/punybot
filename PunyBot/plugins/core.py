@@ -62,17 +62,15 @@ class CorePlugin(Plugin):
         return
 
     def update_status(self):
-        steam_key = os.getenv("STEAM_API_KEY")
         players = 0
         if not self.player_counts.get(self.current_status_app) or (datetime.now().timestamp() - self.player_counts[self.current_status_app]['last_requested']) > 30:
             try:
+                # Public Steam Web API endpoint — GetNumberOfCurrentPlayers needs no API key.
                 r = requests.get(
-                    f"https://partner.steam-api.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?key={steam_key}&appid={self.current_status_app}")
-                if r.status_code == 403:
-                    self.log.error(f"Error: 403 Forbidden Given when trying to get player count for APP ID: {self.current_status_app}. Are you using a valid API Key?")
-                elif not r.json():
+                    f"https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/?appid={self.current_status_app}")
+                if not r.json():
                     self.log.error("Error: Unable to grab player information")
-                elif r.json()['response'].get('player_count'):
+                elif r.json()['response'].get('player_count') is not None:
                     players = r.json()['response']['player_count']
                     self.player_counts[self.current_status_app] = {'count': players, 'last_requested': datetime.now().timestamp()}
             except Exception as e:
@@ -150,16 +148,17 @@ class CorePlugin(Plugin):
         if not len(CONFIG.status_apps):
             return self.log.info("Status apps is empty, skipping setting bot status.")
 
-        steam_key = os.getenv("STEAM_API_KEY")
-        if not steam_key:
-            return self.log.error("Error: No valid steam api key found. Please add the following environment variable 'STEAM_API_KEY' to your docker config/.env with the value being a publisher API key.")
+        # Player counts come from the PUBLIC Steam Web API (api.steampowered.com),
+        # which needs no API key. Re-register cleanly so gateway reconnects don't
+        # orphan or duplicate the status greenlet (and reset failure counters).
+        if self.schedules.get('update_status'):
+            self.schedules['update_status'].kill()
+        self.bad_requests = 0
+        self.schedule_restarts = 0
 
-        r = requests.get(f"https://partner.steam-api.com/ISteamApps/GetPartnerAppListForWebAPIKey/v1?key={steam_key}")
-        if r.status_code == 403:
-            return self.log.error("Error: Invalid Publisher Steam API Key. Can't get player counts!")
-
-        from random import choice
-        self.current_status_app = choice(CONFIG.status_apps)
+        if self.current_status_app is None:
+            from random import choice
+            self.current_status_app = choice(CONFIG.status_apps)
         self.register_schedule(self.update_status, 5)
 
     @Plugin.listen('Resumed')
