@@ -51,6 +51,30 @@ rss_news_message: |-
 
     ** {url} **
 
+# Dystopia stats feed events (posted by the dystopia plugin).
+# map - the map name (e.g. dys_silo)   server - the server name
+# player / victim - player display names   objective - captured objective name
+# weapon - weapon name   winner - winning team label
+# round_url - https://dystopia-stats.com/round/<id>
+dystopia_round_start: |-
+    ⚔️ | **Match started** on `{map}` — {server}
+    <{round_url}>
+
+dystopia_capture: |-
+    🎯 | **{player}** captured **{objective}** on `{map}`
+    <{round_url}>
+
+dystopia_round_end: |-
+    🏁 | **{winner}** on `{map}` — {server}
+    <{round_url}>
+
+dystopia_kill: |-
+    💀 | **{player}** fragged **{victim}** with {weapon} on `{map}`
+
+# count - number of events collapsed   feed_url - the stats site base url
+dystopia_burst_summary: |-
+    📊 | **{count}** new Dystopia match events this cycle (too many to post individually). See the live feed: <{feed_url}/feed>
+
 pickup_message_template: |-
     Here you will find all the active Pick-Up-Games!
 

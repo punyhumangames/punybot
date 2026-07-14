@@ -39,6 +39,24 @@ class AgreementConfig(SlottedModel):
     post_process_role = Field(snowflake, default=None)
 
 
+class DystopiaConfig(SlottedModel):
+    # Base URL of the Dystopia stats site. The feed is polled at <feed_url>/api/feed/events and
+    # in-message links (/round, /player, /server) are built off this same host.
+    feed_url = Field(text, default="https://dystopia-stats.com")
+    # Default channel that feed events are posted to (overridable per-server via server_channels).
+    channel_id = Field(snowflake, default=None)
+    # How often (seconds) to poll the feed.
+    poll_seconds = Field(int, default=20)
+    # Post individual kill events. OFF by default: a busy server would flood the channel.
+    post_kills = Field(bool, default=False)
+    # Safety cap: if a single poll yields more postable events than this, skip the individual
+    # posts and drop one summary line instead (anti-flood / Discord rate-limit guard).
+    max_events_per_poll = Field(int, default=25)
+    # Optional per-server routing: { <stats server_id>: <discord channel_id> }. Servers not listed
+    # fall back to channel_id.
+    server_channels = DictField(int, snowflake, default={})
+
+
 class PickupGamesConfig(SlottedModel):
     chat_channels_category = Field(snowflake, default=None)
     active_games_channel = Field(snowflake, default=None)
@@ -54,6 +72,7 @@ class BaseConfig(SlottedModel):
     media = Field(MediaConfig)
     agreement = Field(AgreementConfig, default=None)
     pickup_games = DictField(snowflake, DictField(text, PickupGamesConfig, default={}), default={})
+    dystopia = Field(DystopiaConfig, default=None)
 
 
 CONFIG = BaseConfig(config_values)

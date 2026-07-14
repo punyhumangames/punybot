@@ -33,6 +33,13 @@
 * `/kaboom message_id time` - Will mark the message for deletion. It's a slash command with a up to date message selection.
 * `!setupcmds` - Registers the menu/chat commands to the guild it is ran in.
 
+# Dystopia
+## Features
+* Polls the [Dystopia stats](https://dystopia-stats.com) live feed API (`/api/feed/events`) and posts high-signal match events to Discord.
+* Default events: match started (round start), objective captures, and match ended (round end, with the winning team). Individual kills are an opt-in config flag (`dystopia.post_kills`, off by default) so a busy server doesn't flood the channel.
+* Cursor-based dedupe: stores the feed's opaque cursor in a sqlite cache (`DystopiaFeedCache`) so it only ever posts NEW events; a per-poll cap collapses bursts into a single summary line to respect Discord rate limits.
+* Optional per-server channel routing via `dystopia.server_channels`. Links point to `https://dystopia-stats.com` (`/round/<id>`, `/player/<communityId>`, `/server/<id>`).
+
 # Media
 ## Features
 * Pools steam news into channels using webhooks.

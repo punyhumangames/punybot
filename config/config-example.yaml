@@ -11,6 +11,7 @@ bot:
     - PunyBot.plugins.pickup
     - PunyBot.plugins.agreement
     - PunyBot.plugins.kaboom
+    - PunyBot.plugins.dystopia
 
 # These are the intents that the bot will need when connecting to Discord's API
 # See more about intents here: https://discord.com/developers/docs/topics/gateway#gateway-intents
@@ -82,6 +83,26 @@ agreement:
   pre_process_role: ROLE_1
   # The role ID in which users are then switched to after signing the agreement
   post_process_role: ROLE_2
+
+# Section for the Dystopia stats live match feed.
+# The plugin polls <feed_url>/api/feed/events and posts high-signal match events to Discord.
+dystopia:
+  # Base URL of the Dystopia stats site. The feed is polled at <feed_url>/api/feed/events and
+  # in-message links (/round, /player, /server) are built off this same host.
+  feed_url: "https://dystopia-stats.com"
+  # Default channel that feed events are posted to.
+  channel_id: CHANNEL_ID
+  # How often (in seconds) to poll the feed.
+  poll_seconds: 20
+  # Post individual kill events. Leave false on busy servers (kills stay in the feed for later).
+  post_kills: false
+  # If a single poll yields more postable events than this, post one summary instead of flooding.
+  max_events_per_poll: 25
+  # OPTIONAL per-server routing: map a stats server_id to a specific channel. Servers not listed
+  # here fall back to channel_id above. Remove this block to send everything to channel_id.
+  # server_channels:
+  #   201: CHANNEL_ID_FOR_SERVER_201
+  #   202: CHANNEL_ID_FOR_SERVER_202
 
 # Section for Pick-up games.
 pickup_games:
