@@ -1,3 +1,4 @@
+import time
 from collections import deque
 
 import gevent
@@ -12,30 +13,50 @@ from PunyBot.models import DystopiaFeedCache
 # Dystopia team ids -> human labels (2 = Punks, 3 = Corporation; see the stats schema).
 TEAM_NAMES = {2: "The Punks", 3: "The Corporation"}
 
-# How many events to pull per poll. The feed API caps `limit` at 200; a value comfortably above the
-# per-poll cap lets us detect a burst (and summarize) rather than silently truncating it.
+# How many events to pull per page. The feed API caps `limit` at 200. We page repeatedly (advancing
+# the cursor) until the feed reports "caught up", so this is just the page size, not a ceiling on how
+# much we can consume in one poll.
 FETCH_LIMIT = 100
 
-# Bound on the in-memory "already posted" id guard (belt-and-suspenders on top of cursor dedupe).
-SEEN_MAXLEN = 500
+# Zero-pad width for the seconds half of a `since` cursor we build ourselves. Must match the stats
+# API's cursor format (`<zero-padded-unix>:<id>`, 11 digits) so string comparison stays monotonic.
+CURSOR_TS_PAD = 11
 
-# Small pause between individual posts so a legitimate multi-event poll doesn't hammer Discord.
+# Bound on the in-memory "already posted" id guard (belt-and-suspenders on top of cursor dedupe).
+SEEN_MAXLEN = 2000
+
+# Small pause between individual posts so a legitimate multi-event batch doesn't hammer Discord.
 POST_SPACING_SECONDS = 0.4
+
+# Safety cap on pages walked in a single drain, so a runaway feed can't spin forever (200k events).
+MAX_DRAIN_PAGES = 2000
 
 
 class DystopiaPlugin(Plugin):
     """Polls the Dystopia stats feed API (``GET /api/feed/events``) and posts high-signal match
     events (round start/end, objective captures, optionally kills) to Discord.
 
-    Mirrors the MediaPlugin pattern: a ``register_schedule`` poller, a peewee cache model for
-    dedupe (``DystopiaFeedCache`` stores the last opaque cursor), and posts via
-    ``self.bot.client.api.channels_messages_create``. Kills are OFF by default to avoid flooding a
-    busy channel; a per-poll cap collapses bursts into a single summary line.
+    Durable + gap-free by design:
+
+    * **Resume across restarts.** The last consumed cursor lives in ``DystopiaFeedCache`` (per feed
+      URL). On startup we resume from it and post *everything* since - a restart never re-skips or
+      double-posts (the cursor advances strictly forward; an in-memory seen-id set is a dupe
+      backstop).
+    * **Backfill on first run.** With no stored cursor (true first deploy) we start from
+      ``now - backfill_days`` (default 2) instead of "now", so the ~2 days of activity a fresh deploy
+      would otherwise miss get posted.
+    * **All servers.** Nothing filters to "our" servers - every server's events are posted (optional
+      per-server channel routing via ``server_channels``; everything else -> ``channel_id``).
+    * **Volume safe.** A large backlog (cold start / long downtime) keeps full detail for the most
+      recent ``backfill_max_posts`` (default 50) events and collapses the older ones into a single
+      "＋N earlier matches" summary line, so we never flood the channel or trip Discord rate limits.
+      Kills stay OFF by default (``post_kills``) even during backfill.
     """
 
     def load(self, ctx):
         self._seen_ids = deque(maxlen=SEEN_MAXLEN)
         self._seen_set = set()
+        self._polling = False  # re-entrancy guard: a long backfill must not overlap the next tick
 
         cfg = CONFIG.dystopia
         if not cfg or (not cfg.channel_id and not cfg.server_channels):
@@ -43,8 +64,8 @@ class DystopiaPlugin(Plugin):
         else:
             self.feed_url = (cfg.feed_url or "https://dystopia-stats.com").rstrip("/")
             interval = cfg.poll_seconds or 20
-            self.log.info("Dystopia feed poller starting: %s every %ss (kills=%s)",
-                          self.feed_url, interval, cfg.post_kills)
+            self.log.info("Dystopia feed poller starting: %s every %ss (kills=%s, backfill_days=%s)",
+                          self.feed_url, interval, cfg.post_kills, cfg.backfill_days)
             self.register_schedule(self.poll_feed, interval)
 
         super(DystopiaPlugin, self).load(ctx)
@@ -65,8 +86,15 @@ class DystopiaPlugin(Plugin):
                 return ch
         return cfg.channel_id
 
+    def _backfill_start_cursor(self, cfg):
+        """The cursor a true-first-run consumer starts from: ``now - backfill_days``, id ``0`` (which
+        sorts before any real event that second). Matches the API's ``<zero-padded-unix>:<id>``."""
+        days = cfg.backfill_days if cfg.backfill_days is not None else 2
+        start_ts = int(time.time()) - int(days) * 86400
+        return "{ts:0{pad}d}:0".format(ts=max(0, start_ts), pad=CURSOR_TS_PAD)
+
     def _format(self, event):
-        """Return the message string for a NEW event, or None to skip (e.g. kills when disabled)."""
+        """Return the message string for an event, or None to skip (e.g. kills when disabled)."""
         cfg = CONFIG.dystopia
         kind = event.get("kind")
         game_map = event.get("mapName") or "unknown"
@@ -111,77 +139,146 @@ class DystopiaPlugin(Plugin):
             self.log.error("[dystopia] Failed to post to channel %s: %s", channel_id, e)
             return False
 
-    # -- poller ----------------------------------------------------------------------------------
+    def _postable(self, event):
+        """(event_id, channel_id, content, cursor) for a NEW, postable event, or None to skip."""
+        event_id = event.get("id")
+        if not event_id or event_id in self._seen_set:
+            return None
+        content = self._format(event)
+        if content is None:
+            return None
+        channel_id = self._channel_for(event)
+        if not channel_id:
+            return None
+        return (event_id, channel_id, content, event.get("cursor"))
 
-    def poll_feed(self):
-        cfg = CONFIG.dystopia
-
-        cache = DystopiaFeedCache.get_or_none(feed_url=self.feed_url)
+    def _fetch(self, since):
+        """One page of the feed. Returns (events, cursor) or None on error."""
         params = {"limit": FETCH_LIMIT}
-        if cache:
-            params["since"] = cache.last_cursor
-
+        if since:
+            params["since"] = since
         try:
             r = requests.get(f"{self.feed_url}/api/feed/events", params=params, timeout=15)
             r.raise_for_status()
             data = r.json()
         except Exception as e:
             self.log.error("[dystopia] Feed poll failed: %s", e)
-            return
+            return None
+        return data.get("events") or [], data.get("cursor")
 
-        events = data.get("events") or []
-        cursor = data.get("cursor")
+    def _save_cursor(self, cache, cursor):
+        if cursor and cursor != cache.last_cursor:
+            cache.last_cursor = cursor
+            cache.save()
+
+    # -- poller ----------------------------------------------------------------------------------
+
+    def poll_feed(self):
+        if self._polling:
+            # Previous drain (likely a cold-start backfill) still running - don't overlap.
+            return
+        self._polling = True
+        try:
+            self._poll_once()
+        finally:
+            self._polling = False
+
+    def _poll_once(self):
+        cfg = CONFIG.dystopia
+
+        cache = DystopiaFeedCache.get_or_none(feed_url=self.feed_url)
+        first_run = cache is None
+        if first_run:
+            since = self._backfill_start_cursor(cfg)
+            cache = DystopiaFeedCache.create(feed_url=self.feed_url, last_cursor=since)
+            self.log.info("[dystopia] First run: backfilling the last %s day(s) from cursor %s.",
+                          cfg.backfill_days, since)
+
+        page = self._fetch(cache.last_cursor)
+        if page is None:
+            return
+        events, cursor = page
         if not cursor:
             self.log.warning("[dystopia] Feed response had no cursor, skipping.")
             return
 
-        # First run: record where the feed is now and DON'T replay the bootstrap batch.
-        if not cache:
-            DystopiaFeedCache.create(feed_url=self.feed_url, last_cursor=cursor)
-            self.log.info("[dystopia] Bootstrapped feed cursor (%d events skipped on first run).", len(events))
-            return
+        # One unified path for every poll: drain the feed forward to "caught up" and post. A steady
+        # caught-up tick is just a one-page drain; a cold-start backfill or a long-downtime catch-up is
+        # a many-page drain. Either way the volume cap keeps the newest `backfill_max_posts` in full and
+        # collapses anything older into a single summary line, so we never flood the channel.
+        self._drain_and_post(cache, events, cursor)
 
-        # Nothing new: advance nothing (cursor echoes since) and return.
-        if not events:
-            return
+    def _drain_and_post(self, cache, first_events, first_cursor):
+        """Walk the feed forward to "caught up", collecting every postable event, then post them with
+        the most-recent portion in full and older ones collapsed into one summary line.
 
-        # Build the postable set first (kills may be filtered out) so the burst cap reflects what
-        # would actually hit the channel.
+        Crash safety comes from the persisted cursor alone (the in-memory seen-set doesn't survive a
+        restart): we keep the stored cursor at the START of the backlog while draining/collecting (so a
+        crash mid-drain just re-drains, having posted nothing), then advance it as we post - so a crash
+        mid-post resumes from the last posted event with no dupes and no misses.
+        """
+        cfg = CONFIG.dystopia
+
         postable = []
-        for event in events:
-            event_id = event.get("id")
-            if event_id in self._seen_set:
-                continue
-            content = self._format(event)
-            if content is None:
-                continue
-            channel_id = self._channel_for(event)
-            if not channel_id:
-                continue
-            postable.append((event_id, channel_id, content))
+        final_cursor = first_cursor
+        since = cache.last_cursor
+        events, cursor = first_events, first_cursor
+        pages = 0
+        while True:
+            pages += 1
+            if not events:
+                # Empty page => the feed echoes `since`; we're caught up.
+                break
+            for e in events:
+                p = self._postable(e)
+                if p:
+                    postable.append(p)
+            final_cursor = cursor
+            if cursor == since:
+                break  # safety: cursor didn't advance despite events (shouldn't happen)
+            if pages >= MAX_DRAIN_PAGES:
+                self.log.warning("[dystopia] Drain hit page cap (%d); will continue next poll.", pages)
+                break
+            since = cursor
+            nxt = self._fetch(since)
+            if nxt is None:
+                break  # transient error: post what we have; the stored cursor lets us resume later
+            events, cursor = nxt
+            if not cursor:
+                break
 
-        # Anti-flood: too many at once -> one summary line instead of a wall of posts.
-        if len(postable) > cfg.max_events_per_poll:
-            summary = Messages.dystopia_burst_summary.format(count=len(postable), feed_url=self.feed_url)
-            target = cfg.channel_id or postable[0][1]
-            self._post(target, summary)
-            for event_id, _, _ in postable:
-                self._mark_seen(event_id)
-            self._save_cursor(cache, cursor)
-            self.log.info("[dystopia] Burst of %d events summarized to channel %s.", len(postable), target)
+        if not postable:
+            # Nothing to post; still advance over any drained (non-postable) tail so we don't re-scan.
+            self._save_cursor(cache, final_cursor)
             return
+
+        if pages > 1 or len(postable) > cfg.backfill_max_posts:
+            self.log.info("[dystopia] Backlog drained: %d pages, %d postable events.", pages, len(postable))
+
+        cap = cfg.backfill_max_posts
+        to_post = postable
+        if cap and len(postable) > cap:
+            older, to_post = postable[:len(postable) - cap], postable[len(postable) - cap:]
+            summary = Messages.dystopia_backfill_summary.format(
+                count=len(older), days=cfg.backfill_days, feed_url=self.feed_url)
+            target = cfg.channel_id or older[0][1]
+            self._post(target, summary)
+            for event_id, _, _, _ in older:
+                self._mark_seen(event_id)
+            self._save_cursor(cache, older[-1][3])  # advance past the summarized older events
+            self.log.info("[dystopia] Collapsed %d older events into a summary; posting newest %d in full.",
+                          len(older), len(to_post))
 
         posted = 0
-        for event_id, channel_id, content in postable:
+        for event_id, channel_id, content, ev_cursor in to_post:
             if self._post(channel_id, content):
                 posted += 1
             self._mark_seen(event_id)
+            self._save_cursor(cache, ev_cursor)  # incremental: a crash resumes after the last post
             gevent.sleep(POST_SPACING_SECONDS)
 
-        self._save_cursor(cache, cursor)
+        # Advance over any trailing non-postable events (e.g. kills while post_kills=False) so we don't
+        # re-drain the same tail every poll.
+        self._save_cursor(cache, final_cursor)
         if posted:
-            self.log.info("[dystopia] Posted %d/%d new events.", posted, len(postable))
-
-    def _save_cursor(self, cache, cursor):
-        cache.last_cursor = cursor
-        cache.save()
+            self.log.info("[dystopia] Posted %d event(s); cursor at %s.", posted, cache.last_cursor)

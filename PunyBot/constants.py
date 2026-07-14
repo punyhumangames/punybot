@@ -49,9 +49,12 @@ class DystopiaConfig(SlottedModel):
     poll_seconds = Field(int, default=20)
     # Post individual kill events. OFF by default: a busy server would flood the channel.
     post_kills = Field(bool, default=False)
-    # Safety cap: if a single poll yields more postable events than this, skip the individual
-    # posts and drop one summary line instead (anti-flood / Discord rate-limit guard).
-    max_events_per_poll = Field(int, default=25)
+    # On a TRUE first run (no stored cursor) backfill this many days of missed activity instead of
+    # starting at "now". Restarts always resume from the stored cursor regardless of this.
+    backfill_days = Field(int, default=2)
+    # When draining a backlog (cold-start backfill or long-downtime catch-up), keep full detail for
+    # only the most recent this-many events; older ones collapse into one "＋N earlier matches" line.
+    backfill_max_posts = Field(int, default=50)
     # Optional per-server routing: { <stats server_id>: <discord channel_id> }. Servers not listed
     # fall back to channel_id.
     server_channels = DictField(int, snowflake, default={})

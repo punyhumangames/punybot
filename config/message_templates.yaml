@@ -71,9 +71,9 @@ dystopia_round_end: |-
 dystopia_kill: |-
     💀 | **{player}** fragged **{victim}** with {weapon} on `{map}`
 
-# count - number of events collapsed   feed_url - the stats site base url
-dystopia_burst_summary: |-
-    📊 | **{count}** new Dystopia match events this cycle (too many to post individually). See the live feed: <{feed_url}/feed>
+# count - number of older events collapsed   days - backfill window   feed_url - the stats site base url
+dystopia_backfill_summary: |-
+    📊 | ＋**{count}** earlier Dystopia matches from the last {days} day(s) (catching up). See the full feed: <{feed_url}/feed>
 
 pickup_message_template: |-
     Here you will find all the active Pick-Up-Games!

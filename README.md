@@ -35,10 +35,23 @@
 
 # Dystopia
 ## Features
-* Polls the [Dystopia stats](https://dystopia-stats.com) live feed API (`/api/feed/events`) and posts high-signal match events to Discord.
+* Polls the [Dystopia stats](https://dystopia-stats.com) live feed API (`/api/feed/events`) and posts high-signal match events for **all** servers to Discord.
 * Default events: match started (round start), objective captures, and match ended (round end, with the winning team). Individual kills are an opt-in config flag (`dystopia.post_kills`, off by default) so a busy server doesn't flood the channel.
-* Cursor-based dedupe: stores the feed's opaque cursor in a sqlite cache (`DystopiaFeedCache`) so it only ever posts NEW events; a per-poll cap collapses bursts into a single summary line to respect Discord rate limits.
-* Optional per-server channel routing via `dystopia.server_channels`. Links point to `https://dystopia-stats.com` (`/round/<id>`, `/player/<communityId>`, `/server/<id>`).
+* **Durable resume:** the last consumed cursor lives in a sqlite cache (`DystopiaFeedCache`), so a restart resumes exactly where it left off and posts everything since — it never re-skips or double-posts (cursor advances strictly forward; an in-memory seen-id set is a dupe backstop).
+* **Backfill on first run:** with no stored cursor (true first deploy) it starts from `now - backfill_days` (`dystopia.backfill_days`, default 2) instead of "now", so the days of activity a fresh deploy would otherwise miss get posted.
+* **Volume safe:** every poll drains the feed forward to "caught up" (a steady tick is one page; a cold start / long downtime is many). The newest `dystopia.backfill_max_posts` (default 50) events are posted in full and anything older collapses into one "＋N earlier matches" summary line, so the channel is never flooded. Posts are spaced to respect Discord rate limits.
+* Optional per-server channel routing via `dystopia.server_channels` (default: everything → `channel_id`). Links point to `https://dystopia-stats.com` (`/round/<id>`, `/player/<communityId>`, `/server/<id>`).
+
+### Config keys (`dystopia`)
+| key | default | meaning |
+| --- | --- | --- |
+| `feed_url` | `https://dystopia-stats.com` | stats site base URL (feed + links) |
+| `channel_id` | — | default channel for feed posts |
+| `poll_seconds` | `20` | poll interval |
+| `post_kills` | `false` | post individual kill events |
+| `backfill_days` | `2` | on true first run, backfill this many days |
+| `backfill_max_posts` | `50` | keep newest N of a backlog in full; summarize the rest |
+| `server_channels` | `{}` | optional `{stats server_id: channel_id}` routing |
 
 # Media
 ## Features

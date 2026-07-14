@@ -96,8 +96,13 @@ dystopia:
   poll_seconds: 20
   # Post individual kill events. Leave false on busy servers (kills stay in the feed for later).
   post_kills: false
-  # If a single poll yields more postable events than this, post one summary instead of flooding.
-  max_events_per_poll: 25
+  # On a TRUE first run (no stored cursor yet) backfill this many days of missed activity instead of
+  # starting at "now" - so a fresh deploy posts recent matches rather than silently skipping them.
+  # Restarts always resume from the last stored cursor regardless of this value.
+  backfill_days: 2
+  # When catching up a backlog (cold-start backfill or long downtime), keep full detail for only the
+  # most recent this-many events; older ones collapse into one "＋N earlier matches" summary line.
+  backfill_max_posts: 50
   # OPTIONAL per-server routing: map a stats server_id to a specific channel. Servers not listed
   # here fall back to channel_id above. Remove this block to send everything to channel_id.
   # server_channels:
