@@ -18,6 +18,14 @@ TEAM_NAMES = {2: "The Punks", 3: "The Corporation"}
 # much we can consume in one poll.
 FETCH_LIMIT = 100
 
+# dystopia-stats.com is behind Cloudflare Browser Integrity Check, which 403s (error 1010) any
+# request whose User-Agent looks non-browser — including python-requests' default. Send a real
+# browser UA so the feed poll gets through. (The game-server ingest is unaffected: it uses libcurl,
+# which BIC lets through.) See dystopia-hub decisions/2026-07-14-bot-feed-403-browser-ua.md.
+FEED_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+}
+
 # Zero-pad width for the seconds half of a `since` cursor we build ourselves. Must match the stats
 # API's cursor format (`<zero-padded-unix>:<id>`, 11 digits) so string comparison stays monotonic.
 CURSOR_TS_PAD = 11
@@ -158,7 +166,8 @@ class DystopiaPlugin(Plugin):
         if since:
             params["since"] = since
         try:
-            r = requests.get(f"{self.feed_url}/api/feed/events", params=params, timeout=15)
+            r = requests.get(f"{self.feed_url}/api/feed/events", params=params,
+                             headers=FEED_HEADERS, timeout=15)
             r.raise_for_status()
             data = r.json()
         except Exception as e:
