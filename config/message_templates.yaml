@@ -55,21 +55,20 @@ rss_news_message: |-
 # map - the map name (e.g. dys_silo)   server - the server name
 # player / victim - player display names   objective - captured objective name
 # weapon - weapon name   winner - winning team label
-# round_url - https://dystopia-stats.com/round/<id>
+# round_id - the round's unique id   round_url - https://dystopia-stats.com/round/<id>
+# Every line leads with a [R<round_id>](<round_url>) tag: multiple servers interleave in one
+# channel, so each line carries its round's id, and the tag is the "watch this round" link.
 dystopia_round_start: |-
-    **Match started** on `{map}` - {server}
-    <{round_url}>
+    [R{round_id}](<{round_url}>) **Match started** on `{map}` - {server}
 
 dystopia_capture: |-
-    **{player}** captured **{objective}** on `{map}`
-    <{round_url}>
+    [R{round_id}](<{round_url}>) **{player}** captured **{objective}** on `{map}`
 
 dystopia_round_end: |-
-    **{winner}** on `{map}` - {server}
-    <{round_url}>
+    [R{round_id}](<{round_url}>) **{winner}** on `{map}` - {server}
 
 dystopia_kill: |-
-    **{player}** killed **{victim}** with {weapon} on `{map}`
+    [R{round_id}](<{round_url}>) **{player}** killed **{victim}** with {weapon} on `{map}`
 
 # count - number of older events collapsed   days - backfill window   feed_url - the stats site base url
 dystopia_backfill_summary: |-
