@@ -57,7 +57,7 @@ rss_news_message: |-
 # weapon - weapon name   winner - winning team label
 # round_url - https://dystopia-stats.com/round/<id>
 dystopia_round_start: |-
-    **Match started** on `{map}` — {server}
+    **Match started** on `{map}` - {server}
     <{round_url}>
 
 dystopia_capture: |-
@@ -65,7 +65,7 @@ dystopia_capture: |-
     <{round_url}>
 
 dystopia_round_end: |-
-    **{winner}** on `{map}` — {server}
+    **{winner}** on `{map}` - {server}
     <{round_url}>
 
 dystopia_kill: |-

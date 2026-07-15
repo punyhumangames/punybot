@@ -48,9 +48,9 @@ HEARTBEAT_EVERY = 30
 # and block every post. These built-in defaults keep the plugin self-contained: `_tpl` prefers the
 # external template when present and falls back here otherwise. Keep them in sync with the yaml.
 DEFAULT_TEMPLATES = {
-    "dystopia_round_start": "**Match started** on `{map}` — {server}\n<{round_url}>",
+    "dystopia_round_start": "**Match started** on `{map}` - {server}\n<{round_url}>",
     "dystopia_capture": "**{player}** captured **{objective}** on `{map}`\n<{round_url}>",
-    "dystopia_round_end": "**{winner}** on `{map}` — {server}\n<{round_url}>",
+    "dystopia_round_end": "**{winner}** on `{map}` - {server}\n<{round_url}>",
     "dystopia_kill": "**{player}** killed **{victim}** with {weapon} on `{map}`",
     "dystopia_backfill_summary": ("+**{count}** earlier Dystopia matches from the last "
                                   "{days} day(s) (catching up). See the full feed: <{feed_url}/feed>"),
