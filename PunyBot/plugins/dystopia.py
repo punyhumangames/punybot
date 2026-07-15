@@ -39,6 +39,10 @@ POST_SPACING_SECONDS = 0.4
 # Safety cap on pages walked in a single drain, so a runaway feed can't spin forever (200k events).
 MAX_DRAIN_PAGES = 2000
 
+# Emit a "still alive, caught up" heartbeat every this-many quiet cycles so a working-but-idle poller
+# (nobody playing => nothing to post) is distinguishable in the logs from a dead greenlet.
+HEARTBEAT_EVERY = 30
+
 
 class DystopiaPlugin(Plugin):
     """Polls the Dystopia stats feed API (``GET /api/feed/events``) and posts high-signal match
@@ -66,6 +70,8 @@ class DystopiaPlugin(Plugin):
         self._seen_ids = deque(maxlen=SEEN_MAXLEN)
         self._seen_set = set()
         self._polling = False  # re-entrancy guard: a long backfill must not overlap the next tick
+        self._polls = 0          # cycle counter, for a low-frequency "still alive" heartbeat
+        self._announced_resume = False  # log the resume cursor + age exactly once at startup
 
         cfg = CONFIG.dystopia
         if not cfg or (not cfg.channel_id and not cfg.server_channels):
@@ -73,6 +79,12 @@ class DystopiaPlugin(Plugin):
         else:
             self.feed_url = (cfg.feed_url or "https://dystopia-stats.com").rstrip("/")
             interval = cfg.poll_seconds or 20
+            if cfg.reset_cursor:
+                dropped = DystopiaFeedCache.delete().where(
+                    DystopiaFeedCache.feed_url == self.feed_url).execute()
+                self.log.warning("[dystopia] reset_cursor set: dropped %d stored cursor row(s); the "
+                                 "next poll will re-backfill %s day(s). Set reset_cursor back to false.",
+                                 dropped, cfg.backfill_days)
             self.log.info("Dystopia feed poller starting: %s every %ss (kills=%s, backfill_days=%s)",
                           self.feed_url, interval, cfg.post_kills, cfg.backfill_days)
             self.register_schedule(self.poll_feed, interval)
@@ -190,6 +202,10 @@ class DystopiaPlugin(Plugin):
         self._polling = True
         try:
             self._poll_once()
+            if self._polls and self._polls % HEARTBEAT_EVERY == 0:
+                cache = DystopiaFeedCache.get_or_none(feed_url=self.feed_url)
+                self.log.info("[dystopia] poll alive: %d cycles, caught up at cursor %s.",
+                              self._polls, cache.last_cursor if cache else "?")
         except Exception as e:
             # A single bad cycle (feed 500, transient network, one malformed event) must be logged
             # and retried next tick — NOT propagate out of the scheduled callback and kill the
@@ -199,8 +215,16 @@ class DystopiaPlugin(Plugin):
         finally:
             self._polling = False
 
+    def _cursor_age_seconds(self, cursor):
+        """Age (seconds) of a `<unix>:<id>` cursor, or None if it doesn't parse."""
+        try:
+            return int(time.time()) - int(str(cursor).split(":", 1)[0])
+        except (ValueError, AttributeError):
+            return None
+
     def _poll_once(self):
         cfg = CONFIG.dystopia
+        self._polls += 1
 
         cache = DystopiaFeedCache.get_or_none(feed_url=self.feed_url)
         first_run = cache is None
@@ -209,6 +233,16 @@ class DystopiaPlugin(Plugin):
             cache = DystopiaFeedCache.create(feed_url=self.feed_url, last_cursor=since)
             self.log.info("[dystopia] First run: backfilling the last %s day(s) from cursor %s.",
                           cfg.backfill_days, since)
+        elif not self._announced_resume:
+            # Distinguish "resumed from a stale cursor near HEAD" (nothing to backfill) from a real
+            # first-run backfill — this is what makes a silent-but-alive poller diagnosable.
+            self._announced_resume = True
+            age = self._cursor_age_seconds(cache.last_cursor)
+            self.log.info("[dystopia] Resuming from stored cursor %s (age %s); posting everything since. "
+                          "Set dystopia.reset_cursor=true to force a full %s-day re-backfill instead.",
+                          cache.last_cursor,
+                          "unknown" if age is None else "{:.1f}h".format(age / 3600.0),
+                          cfg.backfill_days)
 
         page = self._fetch(cache.last_cursor)
         if page is None:

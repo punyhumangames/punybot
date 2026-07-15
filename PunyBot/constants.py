@@ -52,6 +52,11 @@ class DystopiaConfig(SlottedModel):
     # On a TRUE first run (no stored cursor) backfill this many days of missed activity instead of
     # starting at "now". Restarts always resume from the stored cursor regardless of this.
     backfill_days = Field(int, default=2)
+    # One-shot maintenance flag: when true, the stored cursor is DROPPED on load so the next poll
+    # takes the first-run path and re-backfills `backfill_days`. Use to recover from a stale cursor
+    # that advanced past a backlog without posting it. Flip true, redeploy once, then set back to
+    # false (leaving it true re-drops the cursor on every restart).
+    reset_cursor = Field(bool, default=False)
     # When draining a backlog (cold-start backfill or long-downtime catch-up), keep full detail for
     # only the most recent this-many events; older ones collapse into one "＋N earlier matches" line.
     backfill_max_posts = Field(int, default=50)
