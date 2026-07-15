@@ -95,7 +95,7 @@ dystopia:
   # How often (in seconds) to poll the feed.
   poll_seconds: 20
   # Post individual kill events. Leave false on busy servers (kills stay in the feed for later).
-  post_kills: false
+  post_kills: true
   # On a TRUE first run (no stored cursor yet) backfill this many days of missed activity instead of
   # starting at "now" - so a fresh deploy posts recent matches rather than silently skipping them.
   # Restarts always resume from the last stored cursor regardless of this value.

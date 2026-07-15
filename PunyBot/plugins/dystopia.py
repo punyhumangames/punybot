@@ -58,7 +58,8 @@ class DystopiaPlugin(Plugin):
     * **Volume safe.** A large backlog (cold start / long downtime) keeps full detail for the most
       recent ``backfill_max_posts`` (default 50) events and collapses the older ones into a single
       "＋N earlier matches" summary line, so we never flood the channel or trip Discord rate limits.
-      Kills stay OFF by default (``post_kills``) even during backfill.
+      Kills are posted by default (``post_kills=True``); the same backlog cap keeps a cold-start
+      kill backfill from flooding.
     """
 
     def load(self, ctx):

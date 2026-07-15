@@ -48,7 +48,7 @@ class DystopiaConfig(SlottedModel):
     # How often (seconds) to poll the feed.
     poll_seconds = Field(int, default=20)
     # Post individual kill events. OFF by default: a busy server would flood the channel.
-    post_kills = Field(bool, default=False)
+    post_kills = Field(bool, default=True)
     # On a TRUE first run (no stored cursor) backfill this many days of missed activity instead of
     # starting at "now". Restarts always resume from the stored cursor regardless of this.
     backfill_days = Field(int, default=2)
