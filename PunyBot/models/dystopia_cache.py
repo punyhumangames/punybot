@@ -1,6 +1,19 @@
-from peewee import TextField
+from peewee import IntegerField, TextField
 
 from PunyBot.database import SQLiteBase
+
+
+@SQLiteBase.register
+class DystopiaBuildCache(SQLiteBase):
+    """High-water mark for the dystopia-build Actions poller: the largest Forgejo task id already
+    posted to the builds channel. Keyed by ``repo`` (``<forgejo_url>#<owner/repo>``) so one bot
+    could announce more than one repo without cross-talk."""
+
+    class Meta:
+        table_name = 'dystopia_build_cache'
+
+    repo = TextField(primary_key=True)
+    last_task_id = IntegerField(null=False)
 
 
 @SQLiteBase.register

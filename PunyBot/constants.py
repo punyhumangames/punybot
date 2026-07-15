@@ -72,6 +72,20 @@ class PickupGamesConfig(SlottedModel):
     # notify_time = Field(int, default=0)
 
 
+class DystopiaBuildConfig(SlottedModel):
+    # Forgejo instance base URL and the repo whose Actions runs are announced.
+    forgejo_url = Field(text, default="https://git.punyhuman.com")
+    repo = Field(text, default="puny-human/dystopia-build")
+    # Forgejo API token (read:repository) used for BOTH the tasks poll and the ci-logs raw fetch.
+    # Bot-side only, per hub decision 2026-07-15-build-posts-use-punybot-not-a-webhook.md - the
+    # CI runners never see a Discord or bot credential.
+    token = Field(text, default=None)
+    # Builds channel (separate from the stats/match feed channel).
+    channel_id = Field(snowflake, default=None)
+    # How often (seconds) to poll for finished runs.
+    poll_seconds = Field(int, default=60)
+
+
 class BaseConfig(SlottedModel):
     admin_role = ListField(snowflake, default=[])
     status_apps = ListField(int, default=[])
@@ -81,6 +95,7 @@ class BaseConfig(SlottedModel):
     agreement = Field(AgreementConfig, default=None)
     pickup_games = DictField(snowflake, DictField(text, PickupGamesConfig, default={}), default={})
     dystopia = Field(DystopiaConfig, default=None)
+    dystopia_build = Field(DystopiaBuildConfig, default=None)
 
 
 CONFIG = BaseConfig(config_values)

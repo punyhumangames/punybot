@@ -12,6 +12,7 @@ bot:
     - PunyBot.plugins.agreement
     - PunyBot.plugins.kaboom
     - PunyBot.plugins.dystopia
+    - PunyBot.plugins.dystopia_build
 
 # These are the intents that the bot will need when connecting to Discord's API
 # See more about intents here: https://discord.com/developers/docs/topics/gateway#gateway-intents
@@ -108,6 +109,18 @@ dystopia:
   # server_channels:
   #   201: CHANNEL_ID_FOR_SERVER_201
   #   202: CHANNEL_ID_FOR_SERVER_202
+
+# Section for the dystopia-build CI status poller (hub decision: build posts via PunyBot,
+# not a webhook - the CI runners stay credential-free). Posts one terse line per finished run:
+#   Dystopia build 29-win: succeeded - Steam BuildID: client 24229135, dedicated server 24229143
+dystopia_build:
+  forgejo_url: "https://git.punyhuman.com"
+  repo: "puny-human/dystopia-build"
+  # Forgejo API token with read:repository - used for the tasks poll and the ci-logs SUMMARY fetch.
+  token: FORGEJO_TOKEN
+  # The builds channel (NOT the stats/match feed channel).
+  channel_id: CHANNEL_ID
+  poll_seconds: 60
 
 # Section for Pick-up games.
 pickup_games:
