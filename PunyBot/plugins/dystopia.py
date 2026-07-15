@@ -43,6 +43,19 @@ MAX_DRAIN_PAGES = 2000
 # (nobody playing => nothing to post) is distinguishable in the logs from a dead greenlet.
 HEARTBEAT_EVERY = 30
 
+# Message templates live in config/message_templates.yaml (loaded as `Messages`), but that file is a
+# mounted config volume in deployment and can lag the repo — a missing key would AttributeError mid-poll
+# and block every post. These built-in defaults keep the plugin self-contained: `_tpl` prefers the
+# external template when present and falls back here otherwise. Keep them in sync with the yaml.
+DEFAULT_TEMPLATES = {
+    "dystopia_round_start": "⚔️ | **Match started** on `{map}` — {server}\n<{round_url}>",
+    "dystopia_capture": "\U0001f3af | **{player}** captured **{objective}** on `{map}`\n<{round_url}>",
+    "dystopia_round_end": "\U0001f3c1 | **{winner}** on `{map}` — {server}\n<{round_url}>",
+    "dystopia_kill": "\U0001f480 | **{player}** fragged **{victim}** with {weapon} on `{map}`",
+    "dystopia_backfill_summary": ("\U0001f4ca | ＋**{count}** earlier Dystopia matches from the last "
+                                  "{days} day(s) (catching up). See the full feed: <{feed_url}/feed>"),
+}
+
 
 class DystopiaPlugin(Plugin):
     """Polls the Dystopia stats feed API (``GET /api/feed/events``) and posts high-signal match
@@ -114,6 +127,11 @@ class DystopiaPlugin(Plugin):
         start_ts = int(time.time()) - int(days) * 86400
         return "{ts:0{pad}d}:0".format(ts=max(0, start_ts), pad=CURSOR_TS_PAD)
 
+    def _tpl(self, name):
+        """Message template ``name``: the external one (config/message_templates.yaml) if it's defined,
+        else the built-in default. Guards against a stale/partial mounted template file crashing a poll."""
+        return getattr(Messages, name, None) or DEFAULT_TEMPLATES[name]
+
     def _format(self, event):
         """Return the message string for an event, or None to skip (e.g. kills when disabled)."""
         cfg = CONFIG.dystopia
@@ -125,15 +143,15 @@ class DystopiaPlugin(Plugin):
         victim = event.get("victim") or {}
 
         if kind == "round_start":
-            return Messages.dystopia_round_start.format(map=game_map, server=server, round_url=round_url)
+            return self._tpl("dystopia_round_start").format(map=game_map, server=server, round_url=round_url)
 
         if kind == "round_end":
             team = event.get("winningTeam")
             winner = f"{TEAM_NAMES[team]} won" if team in TEAM_NAMES else "Match ended"
-            return Messages.dystopia_round_end.format(winner=winner, map=game_map, server=server, round_url=round_url)
+            return self._tpl("dystopia_round_end").format(winner=winner, map=game_map, server=server, round_url=round_url)
 
         if kind == "capture":
-            return Messages.dystopia_capture.format(
+            return self._tpl("dystopia_capture").format(
                 player=actor.get("name") or "Someone",
                 objective=event.get("objective") or "an objective",
                 map=game_map,
@@ -143,7 +161,7 @@ class DystopiaPlugin(Plugin):
         if kind == "kill":
             if not cfg.post_kills:
                 return None
-            return Messages.dystopia_kill.format(
+            return self._tpl("dystopia_kill").format(
                 player=actor.get("name") or "Someone",
                 victim=victim.get("name") or "the environment",
                 weapon=event.get("weapon") or "an unknown weapon",
@@ -309,7 +327,7 @@ class DystopiaPlugin(Plugin):
         to_post = postable
         if cap and len(postable) > cap:
             older, to_post = postable[:len(postable) - cap], postable[len(postable) - cap:]
-            summary = Messages.dystopia_backfill_summary.format(
+            summary = self._tpl("dystopia_backfill_summary").format(
                 count=len(older), days=cfg.backfill_days, feed_url=self.feed_url)
             target = cfg.channel_id or older[0][1]
             self._post(target, summary)
