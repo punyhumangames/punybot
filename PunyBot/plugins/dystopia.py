@@ -170,7 +170,10 @@ class DystopiaPlugin(Plugin):
 
         return None
 
-    def _post(self, channel_id, content):
+    def _post_message(self, channel_id, content):
+        # NB: do NOT name this `_post` — disco's Plugin base reserves `self._pre` / `self._post` as its
+        # command-hook registry dicts, which would shadow the method (self._post(...) -> dict call ->
+        # TypeError). Same reason to avoid `_pre`, `commands`, `listeners`, `schedules`, `_events`.
         try:
             self.bot.client.api.channels_messages_create(channel_id, content=content)
             return True
@@ -330,7 +333,7 @@ class DystopiaPlugin(Plugin):
             summary = self._tpl("dystopia_backfill_summary").format(
                 count=len(older), days=cfg.backfill_days, feed_url=self.feed_url)
             target = cfg.channel_id or older[0][1]
-            self._post(target, summary)
+            self._post_message(target, summary)
             for event_id, _, _, _ in older:
                 self._mark_seen(event_id)
             self._save_cursor(cache, older[-1][3])  # advance past the summarized older events
@@ -339,7 +342,7 @@ class DystopiaPlugin(Plugin):
 
         posted = 0
         for event_id, channel_id, content, ev_cursor in to_post:
-            if self._post(channel_id, content):
+            if self._post_message(channel_id, content):
                 posted += 1
             self._mark_seen(event_id)
             self._save_cursor(cache, ev_cursor)  # incremental: a crash resumes after the last post
