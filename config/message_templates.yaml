@@ -69,7 +69,7 @@ dystopia_round_end: |-
     <{round_url}>
 
 dystopia_kill: |-
-    **{player}** fragged **{victim}** with {weapon} on `{map}`
+    **{player}** killed **{victim}** with {weapon} on `{map}`
 
 # count - number of older events collapsed   days - backfill window   feed_url - the stats site base url
 dystopia_backfill_summary: |-

@@ -51,7 +51,7 @@ DEFAULT_TEMPLATES = {
     "dystopia_round_start": "**Match started** on `{map}` — {server}\n<{round_url}>",
     "dystopia_capture": "**{player}** captured **{objective}** on `{map}`\n<{round_url}>",
     "dystopia_round_end": "**{winner}** on `{map}` — {server}\n<{round_url}>",
-    "dystopia_kill": "**{player}** fragged **{victim}** with {weapon} on `{map}`",
+    "dystopia_kill": "**{player}** killed **{victim}** with {weapon} on `{map}`",
     "dystopia_backfill_summary": ("+**{count}** earlier Dystopia matches from the last "
                                   "{days} day(s) (catching up). See the full feed: <{feed_url}/feed>"),
 }
