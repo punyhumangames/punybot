@@ -57,23 +57,23 @@ rss_news_message: |-
 # weapon - weapon name   winner - winning team label
 # round_url - https://dystopia-stats.com/round/<id>
 dystopia_round_start: |-
-    ⚔️ | **Match started** on `{map}` — {server}
+    **Match started** on `{map}` — {server}
     <{round_url}>
 
 dystopia_capture: |-
-    🎯 | **{player}** captured **{objective}** on `{map}`
+    **{player}** captured **{objective}** on `{map}`
     <{round_url}>
 
 dystopia_round_end: |-
-    🏁 | **{winner}** on `{map}` — {server}
+    **{winner}** on `{map}` — {server}
     <{round_url}>
 
 dystopia_kill: |-
-    💀 | **{player}** fragged **{victim}** with {weapon} on `{map}`
+    **{player}** fragged **{victim}** with {weapon} on `{map}`
 
 # count - number of older events collapsed   days - backfill window   feed_url - the stats site base url
 dystopia_backfill_summary: |-
-    📊 | ＋**{count}** earlier Dystopia matches from the last {days} day(s) (catching up). See the full feed: <{feed_url}/feed>
+    +**{count}** earlier Dystopia matches from the last {days} day(s) (catching up). See the full feed: <{feed_url}/feed>
 
 pickup_message_template: |-
     Here you will find all the active Pick-Up-Games!
