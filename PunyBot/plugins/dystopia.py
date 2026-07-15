@@ -189,6 +189,12 @@ class DystopiaPlugin(Plugin):
         self._polling = True
         try:
             self._poll_once()
+        except Exception as e:
+            # A single bad cycle (feed 500, transient network, one malformed event) must be logged
+            # and retried next tick — NOT propagate out of the scheduled callback and kill the
+            # greenlet (which is how it silently stopped after "poller starting"). Same guard the
+            # RSS/presence schedules already have.
+            self.log.exception("[dystopia] poll cycle failed (retrying next tick): %s", e)
         finally:
             self._polling = False
 
