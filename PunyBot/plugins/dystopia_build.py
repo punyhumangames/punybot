@@ -60,39 +60,48 @@ class DystopiaBuildPlugin(Plugin):
             timeout=timeout,
         )
 
-    def _buildids_for(self, job_name, run_number):
-        """BuildID string for a successful run, from ci-logs/<job>'s SUMMARY.txt - or None.
+    def _summary_for(self, job_name, run_number):
+        """(buildid_string_or_None, discord_lines) from ci-logs/<job>'s SUMMARY.txt.
 
         The ci-logs branch only ever holds the LATEST run of that job, so the summary's `run:` line
         must match this task's run_number; a mismatch (an even newer run already published) means we
-        can't attribute BuildIDs and the post goes out without them rather than with wrong ones.
+        can't attribute anything and the post goes out bare rather than with wrong data.
         """
         try:
             r = self._api(f"repos/{self.repo}/raw/SUMMARY.txt?ref=ci-logs/{job_name}")
             if r.status_code != 200:
-                return None
-            fields = {}
+                return None, []
+            fields, discord = {}, []
             for line in r.text.splitlines():
-                if ":" in line:
+                if line.startswith("discord:"):
+                    note = line[len("discord:"):].strip()
+                    if note:
+                        discord.append(note)
+                elif ":" in line:
                     k, v = line.split(":", 1)
                     fields[k.strip().lstrip("﻿")] = v.strip()
             if fields.get("run") != str(run_number):
-                return None
+                return None, []
             ids = [f"{label} {fields['steam_buildid_' + app]}"
                    for app, label in BUILDID_LABELS if fields.get("steam_buildid_" + app)]
-            return ", ".join(ids) if ids else None
+            return (", ".join(ids) if ids else None), discord
         except requests.RequestException:
-            return None
+            return None, []
 
-    def _format(self, task):
+    def _format(self, task, run_final):
+        """The post for a finished task. `run_final` = this is the run's last-finishing job, which
+        is the one that carries the '#discord' build notes (so a run's notes post exactly once,
+        not once per job)."""
         suffix = JOB_SUFFIX.get(task.get("name"), task.get("name") or "?")
         status = "succeeded" if task["status"] == "success" else "failed"
         msg = f"Dystopia build {task['run_number']}-{suffix}: {status}"
         if task["status"] == "success":
-            ids = self._buildids_for(task.get("name"), task["run_number"])
+            ids, discord = self._summary_for(task.get("name"), task["run_number"])
             if ids:
                 msg += f" - Steam BuildID: {ids}"
-        return msg
+            if run_final and discord:
+                msg += "\n" + "\n".join(discord)
+        return msg[:1900]
 
     # -- poller ----------------------------------------------------------------------------------
 
@@ -131,9 +140,16 @@ class DystopiaBuildPlugin(Plugin):
             if task.get("status") not in FINAL:
                 break
             if task["status"] in POSTED_STATUSES:
+                # This task carries the run's '#discord' notes iff it is the run's last unfinished
+                # job: all sibling tasks of the run are final AND it has the highest id among them
+                # (the ascending walk means ties resolve to exactly one carrier).
+                siblings = [t for t in tasks if t["run_number"] == task["run_number"]]
+                posting = [t for t in siblings if t.get("status") in POSTED_STATUSES]
+                run_final = (all(t.get("status") in FINAL for t in siblings)
+                             and posting and task["id"] == max(t["id"] for t in posting))
                 try:
                     self.bot.client.api.channels_messages_create(
-                        CONFIG.dystopia_build.channel_id, content=self._format(task))
+                        CONFIG.dystopia_build.channel_id, content=self._format(task, run_final))
                 except Exception:
                     self.log.exception("[dystopia_build] post failed for task %s; retrying next tick", task["id"])
                     break
