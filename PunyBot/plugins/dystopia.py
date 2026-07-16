@@ -162,7 +162,7 @@ class DystopiaPlugin(Plugin):
 
         if kind == "round_end":
             team = event.get("winningTeam")
-            winner = f"{TEAM_NAMES[team]} won" if team in TEAM_NAMES else "Match ended"
+            winner = f"{TEAM_NAMES[team]} won" if team in TEAM_NAMES else "Round ended"
             return self._tpl("dystopia_round_end").format(
                 winner=winner, map=game_map, server=server, round_id=round_id, round_url=round_url)
 
