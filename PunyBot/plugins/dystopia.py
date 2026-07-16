@@ -36,6 +36,12 @@ SEEN_MAXLEN = 2000
 # Small pause between individual posts so a legitimate multi-event batch doesn't hammer Discord.
 POST_SPACING_SECONDS = 0.4
 
+# Events collected in one poll are BATCHED into combined messages (consecutive same-channel lines
+# joined with newlines) instead of one message per event - a busy round's kill burst is one or two
+# posts, not fifteen, which is what keeps the bot clear of Discord's ~5 msg/5 s per-channel limit.
+BATCH_CHAR_LIMIT = 1900   # Discord message cap is 2000; leave headroom
+BATCH_MAX_LINES = 25      # readability cap per message
+
 # Safety cap on pages walked in a single drain, so a runaway feed can't spin forever (200k events).
 MAX_DRAIN_PAGES = 2000
 
@@ -353,16 +359,31 @@ class DystopiaPlugin(Plugin):
             self.log.info("[dystopia] Collapsed %d older events into a summary; posting newest %d in full.",
                           len(older), len(to_post))
 
+        # Batch consecutive same-channel events into combined messages (rate-limit safety; see the
+        # BATCH_* constants). Crash semantics unchanged: each chunk marks its events seen and
+        # advances the cursor to its last event, so a crash resumes after the last posted CHUNK.
         posted = 0
-        for event_id, channel_id, content, ev_cursor in to_post:
-            if self._post_message(channel_id, content):
-                posted += 1
-            self._mark_seen(event_id)
-            self._save_cursor(cache, ev_cursor)  # incremental: a crash resumes after the last post
+        messages = 0
+        i, n = 0, len(to_post)
+        while i < n:
+            channel_id = to_post[i][1]
+            j, size = i, 0
+            while (j < n and to_post[j][1] == channel_id and (j - i) < BATCH_MAX_LINES
+                   and size + len(to_post[j][2]) + 1 <= BATCH_CHAR_LIMIT):
+                size += len(to_post[j][2]) + 1
+                j += 1
+            if self._post_message(channel_id, "\n".join(p[2] for p in to_post[i:j])):
+                posted += j - i
+                messages += 1
+            for event_id, _, _, _ in to_post[i:j]:
+                self._mark_seen(event_id)
+            self._save_cursor(cache, to_post[j - 1][3])
+            i = j
             gevent.sleep(POST_SPACING_SECONDS)
 
         # Advance over any trailing non-postable events (e.g. kills while post_kills=False) so we don't
         # re-drain the same tail every poll.
         self._save_cursor(cache, final_cursor)
         if posted:
-            self.log.info("[dystopia] Posted %d event(s); cursor at %s.", posted, cache.last_cursor)
+            self.log.info("[dystopia] Posted %d event(s) in %d message(s); cursor at %s.",
+                          posted, messages, cache.last_cursor)
