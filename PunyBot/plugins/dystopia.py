@@ -51,12 +51,15 @@ HEARTBEAT_EVERY = 30
 # channel, so each line carries its round's unique id, and the tag doubles as the "watch this round"
 # link. The <> inside the masked link suppresses Discord's embed preview. (A "join server" link can't
 # live here: Discord doesn't render steam:// links - the round page on the site is the click-through.)
+# Per Mike: the map appears ONLY on the round-start line (every other line inherits it from
+# context), it's "Round started" (rounds start, matches don't), and the round-start line uses
+# Discord's ### header markdown so it visibly breaks up the kill flow.
 DEFAULT_TEMPLATES = {
-    "dystopia_round_start": "[R{round_id}](<{round_url}>) **Match started** on `{map}` - {server}",
-    "dystopia_capture": "[R{round_id}](<{round_url}>) **{player}** captured **{objective}** on `{map}`",
-    "dystopia_round_end": "[R{round_id}](<{round_url}>) **{winner}** on `{map}` - {server}",
-    "dystopia_kill": "[R{round_id}](<{round_url}>) **{player}** killed **{victim}** with {weapon} on `{map}`",
-    "dystopia_backfill_summary": ("+**{count}** earlier Dystopia matches from the last "
+    "dystopia_round_start": "### [R{round_id}](<{round_url}>) Round started - `{map}` - {server}",
+    "dystopia_capture": "[R{round_id}](<{round_url}>) **{player}** captured **{objective}**",
+    "dystopia_round_end": "[R{round_id}](<{round_url}>) **{winner}** - {server}",
+    "dystopia_kill": "[R{round_id}](<{round_url}>) **{player}** killed **{victim}** with {weapon}",
+    "dystopia_backfill_summary": ("+**{count}** earlier Dystopia rounds from the last "
                                   "{days} day(s) (catching up). See the full feed: <{feed_url}/feed>"),
 }
 
