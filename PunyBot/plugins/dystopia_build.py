@@ -91,16 +91,20 @@ class DystopiaBuildPlugin(Plugin):
     def _format(self, task, run_final):
         """The post for a finished task. `run_final` = this is the run's last-finishing job, which
         is the one that carries the '#discord' build notes (so a run's notes post exactly once,
-        not once per job)."""
+        not once per job).
+
+        Format per Mike: bold status header, BuildIDs on their own line, notes as a hyphen-bulleted
+        code block - visually distinct from the header instead of a wall of plain lines."""
         suffix = JOB_SUFFIX.get(task.get("name"), task.get("name") or "?")
-        status = "succeeded" if task["status"] == "success" else "failed"
-        msg = f"Dystopia build {task['run_number']}-{suffix}: {status}"
+        status = "Success" if task["status"] == "success" else "Failed"
+        msg = f"**Dystopia build {task['run_number']}-{suffix}: {status}**"
         if task["status"] == "success":
             ids, discord = self._summary_for(task.get("name"), task["run_number"])
             if ids:
-                msg += f" - Steam BuildID: {ids}"
+                msg += f"\nSteam BuildID: {ids}"
             if run_final and discord:
-                msg += "\n" + "\n".join(discord)
+                notes = "\n".join(f"- {n}" for n in discord)
+                msg += f"\n```\n{notes}\n```"
         return msg[:1900]
 
     # -- poller ----------------------------------------------------------------------------------
