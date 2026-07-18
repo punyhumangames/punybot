@@ -49,6 +49,15 @@ class DystopiaConfig(SlottedModel):
     poll_seconds = Field(int, default=20)
     # Post individual kill events. OFF by default: a busy server would flood the channel.
     post_kills = Field(bool, default=True)
+    # Kills are BATCHED: instead of one message per kill, they're buffered and flushed as combined
+    # message(s) on this cadence (seconds). Non-kill events (round start/end, captures) still post on
+    # the normal poll cadence. The buffer is also flushed on round-end and on plugin unload/shutdown.
+    kill_batch_seconds = Field(int, default=90)
+    # Guild whose custom weapon emojis (named `dys_<weapon>`) are used to render the weapon icon on
+    # batched kill lines. Resolved by NAME at runtime, so re-uploading the emojis (new ids) is fine.
+    # If unset, the plugin scans every guild it's in for a `dys_*` emoji. Weapons with no matching
+    # emoji fall back to plain "with <weapon>" text.
+    guild_id = Field(snowflake, default=None)
     # On a TRUE first run (no stored cursor) backfill this many days of missed activity instead of
     # starting at "now". Restarts always resume from the stored cursor regardless of this.
     backfill_days = Field(int, default=2)

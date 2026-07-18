@@ -13,6 +13,42 @@ from PunyBot.models import DystopiaFeedCache
 # Dystopia team ids -> human labels (2 = Punks, 3 = Corporation; see the stats schema).
 TEAM_NAMES = {2: "The Punks", 3: "The Corporation"}
 
+# Feed weapon display-string -> custom-emoji short name (the guild emoji is `dys_<value>`). The feed's
+# `kill.weapon` field is a human display NAME (e.g. "MK-808 Rifle", "Minigun"), NOT a raw id - verified
+# against the live /api/feed/events feed - so we map by name. Keys are matched case-insensitively after
+# trimming (see `_weapon_emoji`); katana variants (Light/Medium/Heavy) all share the one katana emoji.
+# Weapons with no entry here (e.g. "Cortex Bomb", "Leg Boosters") fall back to plain "with <weapon>"
+# text. Emoji names Mike uploaded: katana, phist, machp, shotgun, ar, minigun, laser, mk808, ion,
+# smartlocks, tesla, basilisk, boltgun, gl, rl, emp, frag, spider.
+WEAPON_EMOJI = {
+    "mk-808 rifle": "mk808",
+    "assault rifle": "ar",
+    "laser rifle": "laser",
+    "tesla rifle": "tesla",
+    "bolt gun": "boltgun",
+    "boltgun": "boltgun",
+    "minigun": "minigun",
+    "machine pistol": "machp",
+    "smartlock pistols": "smartlocks",
+    "smartlock pistol": "smartlocks",
+    "shotgun": "shotgun",
+    "ion cannon": "ion",
+    "basilisk": "basilisk",
+    "rocket launcher": "rl",
+    "grenade launcher": "gl",
+    "frag grenade": "frag",
+    "emp grenade": "emp",
+    "emp": "emp",
+    "spider grenade": "spider",
+    "spider mine": "spider",
+    "katana (light)": "katana",
+    "katana (medium)": "katana",
+    "katana (heavy)": "katana",
+    "katana": "katana",
+    "fatman fist": "phist",
+    "power fist": "phist",
+}
+
 # How many events to pull per page. The feed API caps `limit` at 200. We page repeatedly (advancing
 # the cursor) until the feed reports "caught up", so this is just the page size, not a ceiling on how
 # much we can consume in one poll.
@@ -98,6 +134,10 @@ class DystopiaPlugin(Plugin):
         self._polling = False  # re-entrancy guard: a long backfill must not overlap the next tick
         self._polls = 0          # cycle counter, for a low-frequency "still alive" heartbeat
         self._announced_resume = False  # log the resume cursor + age exactly once at startup
+        # Kills are buffered here (as postable tuples) and flushed on a timer / round-end / unload,
+        # instead of posting one message per kill. See flush_kills / _drain_and_post.
+        self._kill_buffer = []
+        self._flushing = False  # re-entrancy guard: timer flush must not overlap a round-end flush
 
         cfg = CONFIG.dystopia
         if not cfg or (not cfg.channel_id and not cfg.server_channels):
@@ -111,11 +151,25 @@ class DystopiaPlugin(Plugin):
                 self.log.warning("[dystopia] reset_cursor set: dropped %d stored cursor row(s); the "
                                  "next poll will re-backfill %s day(s). Set reset_cursor back to false.",
                                  dropped, cfg.backfill_days)
-            self.log.info("Dystopia feed poller starting: %s every %ss (kills=%s, backfill_days=%s)",
-                          self.feed_url, interval, cfg.post_kills, cfg.backfill_days)
+            batch = cfg.kill_batch_seconds or 90
+            self.log.info("Dystopia feed poller starting: %s every %ss (kills=%s, kill_batch=%ss, "
+                          "backfill_days=%s)", self.feed_url, interval, cfg.post_kills, batch,
+                          cfg.backfill_days)
             self.register_schedule(self.poll_feed, interval)
+            # Flush buffered kills on their own cadence, independent of the poll interval. init=False so
+            # we don't fire an immediate (empty) flush at startup.
+            self.register_schedule(self.flush_kills, batch, init=False)
 
         super(DystopiaPlugin, self).load(ctx)
+
+    def unload(self, ctx):
+        # Flush any buffered kills before the schedules are killed, so a redeploy/shutdown never drops
+        # the current kill window. super().unload() then kills greenlets/listeners/schedules.
+        try:
+            self.flush_kills()
+        except Exception as e:
+            self.log.error("[dystopia] flush on unload failed: %s", e)
+        super(DystopiaPlugin, self).unload(ctx)
 
     # -- helpers ---------------------------------------------------------------------------------
 
@@ -175,19 +229,69 @@ class DystopiaPlugin(Plugin):
                 round_url=round_url,
             )
 
-        if kind == "kill":
-            if not cfg.post_kills:
-                return None
-            return self._tpl("dystopia_kill").format(
-                player=actor.get("name") or "Someone",
-                victim=victim.get("name") or "the environment",
-                weapon=event.get("weapon") or "an unknown weapon",
-                map=game_map,
-                round_id=round_id,
-                round_url=round_url,
-            )
-
+        # Kills are NOT formatted here: they're batched (see _format_kill / _drain_and_post / flush_kills).
         return None
+
+    # -- kill line rendering ---------------------------------------------------------------------
+
+    def _round_tag(self, round_id):
+        """Plain (un-hyperlinked) round tag for batched kill lines: last 5 digits, zero-padded, in
+        brackets - e.g. 2000000071 -> `[00071]`. Intentionally drops the round-page click-through the
+        other templates carry (Mike's call: kill lines are noise, the round link lives on start/end)."""
+        return "[{}]".format(str(round_id or 0)[-5:].zfill(5))
+
+    def _player_link(self, player):
+        """A killer/victim as `**[Name](<{feed}/player/<communityId>>)**`, or bold-only if we have no
+        stable id (environment/suicide victims have no communityId). communityId is the steamid64 the
+        stats site keys player pages on (verified: GET /player/<communityId> -> 200)."""
+        name = (player or {}).get("name")
+        if not name:
+            return None
+        cid = (player or {}).get("communityId")
+        if cid:
+            return "**[{name}](<{url}/player/{cid}>)**".format(name=name, url=self.feed_url, cid=cid)
+        return "**{}**".format(name)
+
+    def _emoji_guild(self):
+        """The guild whose `dys_*` weapon emojis we resolve against. Prefer the configured guild_id;
+        otherwise fall back to the first guild in state that has any `dys_` emoji."""
+        guilds = self.state.guilds or {}
+        gid = CONFIG.dystopia.guild_id
+        if gid and gid in guilds:
+            return guilds[gid]
+        for g in guilds.values():
+            if any((e.name or "").startswith("dys_") for e in g.emojis.values()):
+                return g
+        return None
+
+    def _weapon_emoji(self, weapon):
+        """Custom-emoji markup (`<:dys_x:id>`) for a feed weapon display-name, resolved BY NAME from the
+        guild at runtime (survives Mike re-uploading the emojis with new ids), or None to fall back to
+        plain text. Maps the feed's weapon name -> `dys_<short>` via WEAPON_EMOJI."""
+        if not weapon:
+            return None
+        short = WEAPON_EMOJI.get(weapon.strip().lower())
+        if not short:
+            return None
+        guild = self._emoji_guild()
+        if not guild:
+            return None
+        name = "dys_" + short
+        for e in guild.emojis.values():
+            if e.name == name:
+                return str(e)  # disco Emoji.__str__ -> "<:name:id>" (or "<a:name:id>")
+        return None
+
+    def _format_kill(self, event):
+        """The batched kill line: plain round tag, player-stats links, weapon emoji.
+        `[00071] **[Killer](<url>)** killed **[Victim](<url>)** <:dys_x:id>`."""
+        killer = self._player_link(event.get("actor")) or "**Someone**"
+        victim = self._player_link(event.get("victim")) or "**the environment**"
+        weapon = event.get("weapon")
+        emoji = self._weapon_emoji(weapon)
+        weapon_part = emoji if emoji else "with {}".format(weapon or "an unknown weapon")
+        return "{tag} {killer} killed {victim} {weapon}".format(
+            tag=self._round_tag(event.get("roundId")), killer=killer, victim=victim, weapon=weapon_part)
 
     def _post_message(self, channel_id, content):
         # NB: do NOT name this `_post` — disco's Plugin base reserves `self._pre` / `self._post` as its
@@ -201,7 +305,7 @@ class DystopiaPlugin(Plugin):
             return False
 
     def _postable(self, event):
-        """(event_id, channel_id, content, cursor) for a NEW, postable event, or None to skip."""
+        """(event_id, channel_id, content, cursor) for a NEW, postable NON-kill event, or None to skip."""
         event_id = event.get("id")
         if not event_id or event_id in self._seen_set:
             return None
@@ -212,6 +316,53 @@ class DystopiaPlugin(Plugin):
         if not channel_id:
             return None
         return (event_id, channel_id, content, event.get("cursor"))
+
+    def _postable_kill(self, event):
+        """(event_id, channel_id, content, cursor) for a NEW kill to be buffered, or None to skip."""
+        if not CONFIG.dystopia.post_kills:
+            return None
+        event_id = event.get("id")
+        if not event_id or event_id in self._seen_set:
+            return None
+        channel_id = self._channel_for(event)
+        if not channel_id:
+            return None
+        return (event_id, channel_id, self._format_kill(event), event.get("cursor"))
+
+    def _chunk(self, entries):
+        """Yield (channel_id, joined_content, group) chunks: consecutive same-channel entries joined
+        with newlines, split so each message stays under Discord's cap (BATCH_CHAR_LIMIT / _MAX_LINES)."""
+        i, n = 0, len(entries)
+        while i < n:
+            channel_id = entries[i][1]
+            j, size = i, 0
+            while (j < n and entries[j][1] == channel_id and (j - i) < BATCH_MAX_LINES
+                   and size + len(entries[j][2]) + 1 <= BATCH_CHAR_LIMIT):
+                size += len(entries[j][2]) + 1
+                j += 1
+            yield channel_id, "\n".join(e[2] for e in entries[i:j]), entries[i:j]
+            i = j
+
+    def flush_kills(self):
+        """Post all buffered kills as combined message(s) and clear the buffer. Called on the batch
+        timer, on round-end, and on unload. The stored cursor was already advanced past these kills
+        when they were buffered (see _drain_and_post), so flushing never touches the cursor."""
+        if self._flushing or not self._kill_buffer:
+            return
+        self._flushing = True
+        try:
+            # Swap the buffer out atomically (before any gevent yield) so a concurrent flush is a no-op.
+            buf, self._kill_buffer = self._kill_buffer, []
+            posted = messages = 0
+            for channel_id, content, group in self._chunk(buf):
+                if self._post_message(channel_id, content):
+                    posted += len(group)
+                    messages += 1
+                gevent.sleep(POST_SPACING_SECONDS)
+            if posted:
+                self.log.info("[dystopia] Flushed %d buffered kill(s) in %d message(s).", posted, messages)
+        finally:
+            self._flushing = False
 
     def _fetch(self, since):
         """One page of the feed. Returns (events, cursor) or None on error."""
@@ -299,17 +450,23 @@ class DystopiaPlugin(Plugin):
         self._drain_and_post(cache, events, cursor)
 
     def _drain_and_post(self, cache, first_events, first_cursor):
-        """Walk the feed forward to "caught up", collecting every postable event, then post them with
-        the most-recent portion in full and older ones collapsed into one summary line.
+        """Walk the feed forward to "caught up". NON-kill events (round start/end, captures) are posted
+        this poll, most-recent in full and older ones collapsed into one summary line. KILLS are routed
+        into `self._kill_buffer` instead and flushed on a timer / round-end / unload (see flush_kills).
 
-        Crash safety comes from the persisted cursor alone (the in-memory seen-set doesn't survive a
-        restart): we keep the stored cursor at the START of the backlog while draining/collecting (so a
+        Crash safety (non-kills) comes from the persisted cursor alone (the in-memory seen-set doesn't
+        survive a restart): we keep the stored cursor at the START of the backlog while draining (so a
         crash mid-drain just re-drains, having posted nothing), then advance it as we post - so a crash
-        mid-post resumes from the last posted event with no dupes and no misses.
+        mid-post resumes with no dupes and no misses. Buffered kills DO have the cursor advanced past
+        them (so interleaved round/capture lines aren't re-posted after a crash); the buffer is flushed
+        on every graceful stop (unload/round-end/timer), and only a hard crash loses the in-flight kill
+        window - a deliberate trade (kill lines are noise; duplicated round summaries are not).
         """
         cfg = CONFIG.dystopia
 
         postable = []
+        kills = []
+        saw_round_end = False
         final_cursor = first_cursor
         since = cache.last_cursor
         events, cursor = first_events, first_cursor
@@ -320,6 +477,13 @@ class DystopiaPlugin(Plugin):
                 # Empty page => the feed echoes `since`; we're caught up.
                 break
             for e in events:
+                if e.get("kind") == "kill":
+                    k = self._postable_kill(e)
+                    if k:
+                        kills.append(k)
+                    continue
+                if e.get("kind") == "round_end":
+                    saw_round_end = True
                 p = self._postable(e)
                 if p:
                     postable.append(p)
@@ -337,8 +501,20 @@ class DystopiaPlugin(Plugin):
             if not cursor:
                 break
 
+        # Buffer this drain's kills (mark them seen so a same-process re-drain won't re-buffer). The
+        # cursor is advanced past them below.
+        if kills:
+            for event_id, _, _, _ in kills:
+                self._mark_seen(event_id)
+            self._kill_buffer.extend(kills)
+
+        # A round ended this drain: flush the kill buffer NOW so the round's kills post promptly (and
+        # ahead of the round_end line) rather than waiting up to kill_batch_seconds.
+        if saw_round_end:
+            self.flush_kills()
+
         if not postable:
-            # Nothing to post; still advance over any drained (non-postable) tail so we don't re-scan.
+            # No non-kill posts; still advance over the drained tail (kills/other) so we don't re-scan.
             self._save_cursor(cache, final_cursor)
             return
 
@@ -364,21 +540,13 @@ class DystopiaPlugin(Plugin):
         # advances the cursor to its last event, so a crash resumes after the last posted CHUNK.
         posted = 0
         messages = 0
-        i, n = 0, len(to_post)
-        while i < n:
-            channel_id = to_post[i][1]
-            j, size = i, 0
-            while (j < n and to_post[j][1] == channel_id and (j - i) < BATCH_MAX_LINES
-                   and size + len(to_post[j][2]) + 1 <= BATCH_CHAR_LIMIT):
-                size += len(to_post[j][2]) + 1
-                j += 1
-            if self._post_message(channel_id, "\n".join(p[2] for p in to_post[i:j])):
-                posted += j - i
+        for channel_id, content, group in self._chunk(to_post):
+            if self._post_message(channel_id, content):
+                posted += len(group)
                 messages += 1
-            for event_id, _, _, _ in to_post[i:j]:
+            for event_id, _, _, _ in group:
                 self._mark_seen(event_id)
-            self._save_cursor(cache, to_post[j - 1][3])
-            i = j
+            self._save_cursor(cache, group[-1][3])
             gevent.sleep(POST_SPACING_SECONDS)
 
         # Advance over any trailing non-postable events (e.g. kills while post_kills=False) so we don't
