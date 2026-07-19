@@ -72,6 +72,15 @@ class DystopiaConfig(SlottedModel):
     # Optional per-server routing: { <stats server_id>: <discord channel_id> }. Servers not listed
     # fall back to channel_id.
     server_channels = DictField(int, snowflake, default={})
+    # Relay in-game ALL-chat to the feed channel. When on, the feed poll opts in (`?include=chat`) so
+    # the stats side sends chat (it is EXCLUDED from the public website feed by design - opt-in only).
+    # Chat text is sanitized for Discord (markdown escaped, @mentions/@everyone defanged, links
+    # neutralized) before posting. Off by default until the game+stats sides ship chat ingest.
+    post_chat = Field(bool, default=False)
+    # Chat is BATCHED like kills but on a shorter cadence (people chat a lot): buffered and flushed as
+    # combined message(s) every this-many seconds. A per-flush line cap (see CHAT_FLUSH_MAX_LINES)
+    # bounds a spam burst. Also flushed on plugin unload/shutdown.
+    chat_batch_seconds = Field(int, default=20)
 
 
 class PickupGamesConfig(SlottedModel):

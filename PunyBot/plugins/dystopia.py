@@ -1,3 +1,4 @@
+import re
 import time
 from collections import deque
 
@@ -81,6 +82,19 @@ BATCH_MAX_LINES = 25      # readability cap per message
 # Safety cap on pages walked in a single drain, so a runaway feed can't spin forever (200k events).
 MAX_DRAIN_PAGES = 2000
 
+# -- chat relay (in-game ALL-chat -> feed channel) -------------------------------------------------
+# Chat is user-controlled text from an untrusted game server, so every line is sanitized before it
+# touches Discord. Two dangers to neutralize: (1) markdown/masked-link injection (a message like
+# `[click](http://evil)` or `**bait**`), and (2) mention pings (`@everyone`, `@here`, `@user`,
+# `<@id>`). The stats side already length-clamps + strips control chars; we defend again here.
+CHAT_TEXT_MAX = 240          # hard length cap (matches the stats-side clamp); trimmed with an ellipsis
+CHAT_FLUSH_MAX_LINES = 60    # per-flush line cap: a spam flood can't overflow the channel (excess -> note)
+_ZWSP = "​"             # zero-width space, inserted to break mention tokens without visible change
+# Backslash-escape the inline markdown metacharacters. `\` must be first in the class so it's escaped
+# before the others. `[ ] ( )` defang masked-link injection; `` ` * _ ~ | `` defang text formatting.
+_MD_META = re.compile(r"([\\`*_~|\[\]()])")
+_WS_RUN = re.compile(r"\s+")  # collapse any whitespace run (incl. newlines/tabs) to one space
+
 # Emit a "still alive, caught up" heartbeat every this-many quiet cycles so a working-but-idle poller
 # (nobody playing => nothing to post) is distinguishable in the logs from a dead greenlet.
 HEARTBEAT_EVERY = 30
@@ -138,6 +152,9 @@ class DystopiaPlugin(Plugin):
         # instead of posting one message per kill. See flush_kills / _drain_and_post.
         self._kill_buffer = []
         self._flushing = False  # re-entrancy guard: timer flush must not overlap a round-end flush
+        # Chat is buffered + flushed just like kills, on its own (shorter) cadence. See flush_chat.
+        self._chat_buffer = []
+        self._flushing_chat = False
 
         cfg = CONFIG.dystopia
         if not cfg or (not cfg.channel_id and not cfg.server_channels):
@@ -152,13 +169,17 @@ class DystopiaPlugin(Plugin):
                                  "next poll will re-backfill %s day(s). Set reset_cursor back to false.",
                                  dropped, cfg.backfill_days)
             batch = cfg.kill_batch_seconds or 90
+            chat_batch = cfg.chat_batch_seconds or 20
             self.log.info("Dystopia feed poller starting: %s every %ss (kills=%s, kill_batch=%ss, "
-                          "backfill_days=%s)", self.feed_url, interval, cfg.post_kills, batch,
-                          cfg.backfill_days)
+                          "chat=%s, chat_batch=%ss, backfill_days=%s)", self.feed_url, interval,
+                          cfg.post_kills, batch, cfg.post_chat, chat_batch, cfg.backfill_days)
             self.register_schedule(self.poll_feed, interval)
             # Flush buffered kills on their own cadence, independent of the poll interval. init=False so
             # we don't fire an immediate (empty) flush at startup.
             self.register_schedule(self.flush_kills, batch, init=False)
+            # Chat flushes on its own (shorter) cadence so it stays readable in near-real-time.
+            if cfg.post_chat:
+                self.register_schedule(self.flush_chat, chat_batch, init=False)
 
         super(DystopiaPlugin, self).load(ctx)
 
@@ -169,6 +190,10 @@ class DystopiaPlugin(Plugin):
             self.flush_kills()
         except Exception as e:
             self.log.error("[dystopia] flush on unload failed: %s", e)
+        try:
+            self.flush_chat()
+        except Exception as e:
+            self.log.error("[dystopia] chat flush on unload failed: %s", e)
         super(DystopiaPlugin, self).unload(ctx)
 
     # -- helpers ---------------------------------------------------------------------------------
@@ -244,13 +269,27 @@ class DystopiaPlugin(Plugin):
         round_url = f"{self.feed_url}/round/{round_id}"
         return f"\\[[{last5}](<{round_url}>)\\]"
 
+    def _escape_md(self, s):
+        """Neutralize a user-controlled string for inline use in a Discord message: collapse whitespace
+        (no newline/`\\n` line injection), backslash-escape inline markdown metacharacters (so `**`,
+        `` ` ``, and `[..](..)` masked links render literally instead of formatting), and defang mention
+        tokens (`@everyone`/`@here`/`@user` and `<@id>`/`<#chan>`/`<@&role>`) by inserting a zero-width
+        space after each `@` and `<`. Player names AND chat text both pass through here."""
+        if not s:
+            return ""
+        s = _WS_RUN.sub(" ", s.replace(_ZWSP, "")).strip()  # strip pre-seeded ZWSP, then collapse ws
+        s = _MD_META.sub(r"\\\1", s)
+        return s.replace("@", "@" + _ZWSP).replace("<", "<" + _ZWSP)
+
     def _player_link(self, player):
         """A killer/victim as `**[Name](<{feed}/player/<communityId>>)**`, or bold-only if we have no
         stable id (environment/suicide victims have no communityId). communityId is the steamid64 the
-        stats site keys player pages on (verified: GET /player/<communityId> -> 200)."""
-        name = (player or {}).get("name")
-        if not name:
+        stats site keys player pages on (verified: GET /player/<communityId> -> 200). The name is
+        markdown-escaped (`_escape_md`) so a crafted name can't break out of the masked link or ping."""
+        raw = (player or {}).get("name")
+        if not raw:
             return None
+        name = self._escape_md(raw)
         cid = (player or {}).get("communityId")
         if cid:
             return "**[{name}](<{url}/player/{cid}>)**".format(name=name, url=self.feed_url, cid=cid)
@@ -297,6 +336,25 @@ class DystopiaPlugin(Plugin):
         return "{tag} {killer} killed {victim} {weapon}".format(
             tag=self._round_tag(event.get("roundId")), killer=killer, victim=victim, weapon=weapon_part)
 
+    def _sanitize_chat(self, text):
+        """A chat message body, made safe for Discord: escaped/defanged via `_escape_md`, then length
+        capped (belt-and-suspenders on top of the stats-side clamp). Returns "" for empty/blank."""
+        s = self._escape_md(text)
+        if len(s) > CHAT_TEXT_MAX:
+            s = s[:CHAT_TEXT_MAX].rstrip() + "…"
+        return s
+
+    def _format_chat(self, event):
+        """The batched chat line: round tag, linked speaker, sanitized message.
+        `[00071] **[Speaker](<url>)**: hey team`. Returns None if the message is empty after sanitizing."""
+        text = self._sanitize_chat(event.get("text"))
+        if not text:
+            return None
+        actor = event.get("actor") or {}
+        speaker = self._player_link(actor) or "**{}**".format(self._escape_md(actor.get("name")) or "Someone")
+        return "{tag} {speaker}: {text}".format(
+            tag=self._round_tag(event.get("roundId")), speaker=speaker, text=text)
+
     def _post_message(self, channel_id, content):
         # NB: do NOT name this `_post` — disco's Plugin base reserves `self._pre` / `self._post` as its
         # command-hook registry dicts, which would shadow the method (self._post(...) -> dict call ->
@@ -333,6 +391,21 @@ class DystopiaPlugin(Plugin):
             return None
         return (event_id, channel_id, self._format_kill(event), event.get("cursor"))
 
+    def _postable_chat(self, event):
+        """(event_id, channel_id, content, cursor) for a NEW chat line to be buffered, or None to skip."""
+        if not CONFIG.dystopia.post_chat:
+            return None
+        event_id = event.get("id")
+        if not event_id or event_id in self._seen_set:
+            return None
+        channel_id = self._channel_for(event)
+        if not channel_id:
+            return None
+        content = self._format_chat(event)
+        if content is None:
+            return None
+        return (event_id, channel_id, content, event.get("cursor"))
+
     def _chunk(self, entries):
         """Yield (channel_id, joined_content, group) chunks: consecutive same-channel entries joined
         with newlines, split so each message stays under Discord's cap (BATCH_CHAR_LIMIT / _MAX_LINES)."""
@@ -368,11 +441,46 @@ class DystopiaPlugin(Plugin):
         finally:
             self._flushing = False
 
+    def flush_chat(self):
+        """Post buffered chat as combined message(s) and clear the buffer. Called on the chat batch
+        timer and on unload. Like kills, the cursor was already advanced past these when they were
+        buffered, so flushing never touches the cursor. A per-flush line cap (CHAT_FLUSH_MAX_LINES)
+        bounds a spam burst: excess (oldest-first is kept in order) collapses into a trailing note."""
+        if self._flushing_chat or not self._chat_buffer:
+            return
+        self._flushing_chat = True
+        try:
+            # Swap the buffer out atomically (before any gevent yield) so a concurrent flush is a no-op.
+            buf, self._chat_buffer = self._chat_buffer, []
+            dropped = 0
+            if len(buf) > CHAT_FLUSH_MAX_LINES:
+                dropped = len(buf) - CHAT_FLUSH_MAX_LINES
+                buf = buf[:CHAT_FLUSH_MAX_LINES]
+            posted = messages = 0
+            for channel_id, content, group in self._chunk(buf):
+                if self._post_message(channel_id, content):
+                    posted += len(group)
+                    messages += 1
+                gevent.sleep(POST_SPACING_SECONDS)
+            if dropped and buf:
+                # Note the suppressed flood on the same channel as the batch (belt: don't ping/format).
+                self._post_message(buf[0][1], "_… {} more chat message(s) this window suppressed._".format(dropped))
+            if posted:
+                self.log.info("[dystopia] Flushed %d chat line(s) in %d message(s)%s.", posted, messages,
+                              " (+%d suppressed)" % dropped if dropped else "")
+        finally:
+            self._flushing_chat = False
+
     def _fetch(self, since):
         """One page of the feed. Returns (events, cursor) or None on error."""
         params = {"limit": FETCH_LIMIT}
         if since:
             params["since"] = since
+        # Opt in to chat events. Chat is EXCLUDED from the default feed (what the website uses) by
+        # design - the stats side only returns `kind:"chat"` when this param is present, so chat
+        # reaches the bot without ever surfacing on dystopia-stats.com. (Contract: Chat relay.)
+        if CONFIG.dystopia.post_chat:
+            params["include"] = "chat"
         try:
             r = requests.get(f"{self.feed_url}/api/feed/events", params=params,
                              headers=FEED_HEADERS, timeout=15)
@@ -470,6 +578,7 @@ class DystopiaPlugin(Plugin):
 
         postable = []
         kills = []
+        chats = []
         saw_round_end = False
         final_cursor = first_cursor
         since = cache.last_cursor
@@ -485,6 +594,11 @@ class DystopiaPlugin(Plugin):
                     k = self._postable_kill(e)
                     if k:
                         kills.append(k)
+                    continue
+                if e.get("kind") == "chat":
+                    c = self._postable_chat(e)
+                    if c:
+                        chats.append(c)
                     continue
                 if e.get("kind") == "round_end":
                     saw_round_end = True
@@ -511,6 +625,13 @@ class DystopiaPlugin(Plugin):
             for event_id, _, _, _ in kills:
                 self._mark_seen(event_id)
             self._kill_buffer.extend(kills)
+
+        # Buffer this drain's chat the same way (seen-marked; cursor advanced past them below). Flushed
+        # on the chat timer / unload - NOT on round_end (chat isn't round-bound; it flushes fast anyway).
+        if chats:
+            for event_id, _, _, _ in chats:
+                self._mark_seen(event_id)
+            self._chat_buffer.extend(chats)
 
         # A round ended this drain: flush the kill buffer NOW so the round's kills post promptly (and
         # ahead of the round_end line) rather than waiting up to kill_batch_seconds.
