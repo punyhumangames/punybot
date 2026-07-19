@@ -235,10 +235,14 @@ class DystopiaPlugin(Plugin):
     # -- kill line rendering ---------------------------------------------------------------------
 
     def _round_tag(self, round_id):
-        """Plain (un-hyperlinked) round tag for batched kill lines: last 5 digits, zero-padded, in
-        brackets - e.g. 2000000071 -> `[00071]`. Intentionally drops the round-page click-through the
-        other templates carry (Mike's call: kill lines are noise, the round link lives on start/end)."""
-        return "[{}]".format(str(round_id or 0)[-5:].zfill(5))
+        """Round tag for batched kill lines: the last 5 digits (zero-padded) HYPERLINKED to the round
+        page, wrapped in LITERAL brackets - e.g. 2000000112 -> `[00112]` where `00112` links to the
+        round and the `[` `]` are plain text. Per Mike: link the digits, not the brackets. The brackets
+        are backslash-escaped so Discord's masked-link parser does not fold them into the link, and the
+        <> around the url suppresses the embed preview (same as the round-start/end templates)."""
+        last5 = str(round_id or 0)[-5:].zfill(5)
+        round_url = f"{self.feed_url}/round/{round_id}"
+        return f"\\[[{last5}](<{round_url}>)\\]"
 
     def _player_link(self, player):
         """A killer/victim as `**[Name](<{feed}/player/<communityId>>)**`, or bold-only if we have no
