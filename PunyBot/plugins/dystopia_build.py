@@ -88,10 +88,11 @@ class DystopiaBuildPlugin(Plugin):
         except requests.RequestException:
             return None, []
 
-    def _format(self, task, run_final):
-        """The post for a finished task. `run_final` = this is the run's last-finishing job, which
-        is the one that carries the '#discord' build notes (so a run's notes post exactly once,
-        not once per job).
+    def _format(self, task, post_notes):
+        """The post for a finished task. `post_notes` = attach this run's '#discord' build notes to
+        this message: true only on the run's last-finishing job AND only when the WHOLE run
+        succeeded (every job). A run's notes post exactly once, and NEVER when any job failed -
+        the notes describe player-facing changes, so a failed/partial build must not announce them.
 
         Format per Mike: bold status header, BuildIDs on their own line, notes as a hyphen-bulleted
         code block - visually distinct from the header instead of a wall of plain lines."""
@@ -102,7 +103,7 @@ class DystopiaBuildPlugin(Plugin):
             ids, discord = self._summary_for(task.get("name"), task["run_number"])
             if ids:
                 msg += f"\nSteam BuildID: {ids}"
-            if run_final and discord:
+            if post_notes and discord:
                 notes = "\n".join(f"- {n}" for n in discord)
                 msg += f"\n```\n{notes}\n```"
         return msg[:1900]
@@ -151,9 +152,13 @@ class DystopiaBuildPlugin(Plugin):
                 posting = [t for t in siblings if t.get("status") in POSTED_STATUSES]
                 run_final = (all(t.get("status") in FINAL for t in siblings)
                              and posting and task["id"] == max(t["id"] for t in posting))
+                # Notes attach only on the last-finishing job AND only if EVERY job of the run
+                # succeeded - a build that failed (or partially failed) must not announce its
+                # player-facing '#discord' notes.
+                run_ok = all(t.get("status") == "success" for t in siblings)
                 try:
                     self.bot.client.api.channels_messages_create(
-                        CONFIG.dystopia_build.channel_id, content=self._format(task, run_final))
+                        CONFIG.dystopia_build.channel_id, content=self._format(task, run_final and run_ok))
                 except Exception:
                     self.log.exception("[dystopia_build] post failed for task %s; retrying next tick", task["id"])
                     break
