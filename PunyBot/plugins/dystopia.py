@@ -99,6 +99,16 @@ _WS_RUN = re.compile(r"\s+")  # collapse any whitespace run (incl. newlines/tabs
 # (nobody playing => nothing to post) is distinguishable in the logs from a dead greenlet.
 HEARTBEAT_EVERY = 30
 
+# -- per-round threads ----------------------------------------------------------------------------
+# When enabled (dystopia.thread_per_round), each LIVE round's feed goes into its own Discord thread:
+# the channel shows one round-start header per round, and that round's kills/captures/round-end land
+# in the thread hung off that header. Only *live* rounds thread - a cold-start/backfill drain would
+# otherwise spawn a thread per historical round, so a round whose start is older than this window
+# posts flat (and is subject to the normal backfill summary collapse) exactly as before.
+THREAD_LIVE_WINDOW = 300      # seconds; round_start older than this => don't thread (it's backfill)
+THREAD_AUTO_ARCHIVE = 1440    # minutes of inactivity before Discord auto-archives the thread (1 day)
+ROUND_THREADS_MAX = 400       # bound on the in-memory round_id -> thread_id map (evict oldest)
+
 # Message templates live in config/message_templates.yaml (loaded as `Messages`), but that file is a
 # mounted config volume in deployment and can lag the repo — a missing key would AttributeError mid-poll
 # and block every post. These built-in defaults keep the plugin self-contained: `_tpl` prefers the
@@ -155,6 +165,9 @@ class DystopiaPlugin(Plugin):
         # Chat is buffered + flushed just like kills, on its own (shorter) cadence. See flush_chat.
         self._chat_buffer = []
         self._flushing_chat = False
+        # round_id -> thread channel id, for per-round threading. Bounded via _round_thread_order.
+        self._round_threads = {}
+        self._round_thread_order = deque()
 
         cfg = CONFIG.dystopia
         if not cfg or (not cfg.channel_id and not cfg.server_channels):
@@ -211,6 +224,81 @@ class DystopiaPlugin(Plugin):
             if ch:
                 return ch
         return cfg.channel_id
+
+    # -- per-round threading ---------------------------------------------------------------------
+
+    def _threads_enabled(self):
+        return bool(getattr(CONFIG.dystopia, "thread_per_round", True))
+
+    def _event_is_live(self, event):
+        """True if this event is recent enough to thread (i.e. real-time, not a backfill replay)."""
+        age = self._cursor_age_seconds(event.get("cursor"))
+        return age is None or age <= THREAD_LIVE_WINDOW
+
+    def _target_for(self, event):
+        """Channel id to post a round-scoped event (kill/capture/round_end/chat) into: the round's
+        thread if one is open, else the base channel. Threads are only ever opened by a live
+        round_start (_open_round_thread); a round we never saw start (bot joined mid-round, or a
+        backfilled round) simply posts flat to the channel."""
+        base = self._channel_for(event)
+        if not self._threads_enabled():
+            return base
+        rid = event.get("roundId")
+        if rid is not None:
+            return self._round_threads.get(rid, base)
+        return base
+
+    def _remember_thread(self, round_id, thread_id):
+        if round_id in self._round_threads:
+            return
+        self._round_threads[round_id] = thread_id
+        self._round_thread_order.append(round_id)
+        while len(self._round_thread_order) > ROUND_THREADS_MAX:
+            old = self._round_thread_order.popleft()
+            self._round_threads.pop(old, None)
+
+    def _post_return(self, channel_id, content):
+        """Like _post_message but returns the created Message (for thread creation) or None."""
+        try:
+            return self.bot.client.api.channels_messages_create(
+                channel_id, content=content, allowed_mentions={"parse": []})
+        except Exception as e:
+            self.log.error("[dystopia] Failed to post to channel %s: %s", channel_id, e)
+            return None
+
+    def _thread_name(self, event):
+        """A concise (<=100 char) thread title: the round tag digits + map."""
+        rid = event.get("roundId")
+        last5 = str(rid or 0)[-5:].zfill(5)
+        game_map = self._escape_md(event.get("mapName") or "")  # display-only; keep it short/plain
+        name = "Round #{}".format(last5)
+        if game_map:
+            name += " · " + game_map
+        return name[:100]
+
+    def _open_round_thread(self, event):
+        """Handle a live round_start: post its header to the base channel and open a thread from it.
+        Returns True if the header was posted (so the caller skips the normal flat post), False on a
+        total failure (caller falls back to posting it flat)."""
+        rid = event.get("roundId")
+        base = self._channel_for(event)
+        if not base:
+            return False
+        header = self._format(event)  # the round-start template line
+        if not header:
+            return False
+        msg = self._post_return(base, header)
+        if msg is None:
+            return False  # header didn't post; let the caller post it flat instead
+        if rid is not None and rid not in self._round_threads:
+            try:
+                thread = self.bot.client.api.channels_messages_threads_create(
+                    base, msg.id, self._thread_name(event), auto_archive_duration=THREAD_AUTO_ARCHIVE)
+                self._remember_thread(rid, thread.id)
+            except Exception as e:
+                # Header is already up; the round just won't have a thread (events post flat).
+                self.log.error("[dystopia] thread create failed for round %s: %s", rid, e)
+        return True
 
     def _backfill_start_cursor(self, cfg):
         """The cursor a true-first-run consumer starts from: ``now - backfill_days``, id ``0`` (which
@@ -377,7 +465,7 @@ class DystopiaPlugin(Plugin):
         content = self._format(event)
         if content is None:
             return None
-        channel_id = self._channel_for(event)
+        channel_id = self._target_for(event)
         if not channel_id:
             return None
         return (event_id, channel_id, content, event.get("cursor"))
@@ -389,7 +477,7 @@ class DystopiaPlugin(Plugin):
         event_id = event.get("id")
         if not event_id or event_id in self._seen_set:
             return None
-        channel_id = self._channel_for(event)
+        channel_id = self._target_for(event)
         if not channel_id:
             return None
         return (event_id, channel_id, self._format_kill(event), event.get("cursor"))
@@ -401,7 +489,7 @@ class DystopiaPlugin(Plugin):
         event_id = event.get("id")
         if not event_id or event_id in self._seen_set:
             return None
-        channel_id = self._channel_for(event)
+        channel_id = self._target_for(event)
         if not channel_id:
             return None
         content = self._format_chat(event)
@@ -610,6 +698,20 @@ class DystopiaPlugin(Plugin):
                     if c:
                         chats.append(c)
                     continue
+                # A live round_start opens the round's thread NOW (posting its header to the channel),
+                # so this round's kills - buffered right below - already resolve to the thread, and it
+                # exists before the round-end flush. Backfilled/old round_starts fall through and post
+                # flat (and collapse into the backfill summary) exactly as before.
+                if (e.get("kind") == "round_start" and self._threads_enabled()
+                        and self._event_is_live(e)):
+                    eid = e.get("id")
+                    if eid and eid in self._seen_set:
+                        continue
+                    if self._open_round_thread(e):
+                        if eid:
+                            self._mark_seen(eid)
+                        continue
+                    # header didn't post; fall through to post it flat via _postable
                 if e.get("kind") == "round_end":
                     saw_round_end = True
                 p = self._postable(e)

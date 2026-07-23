@@ -49,6 +49,11 @@ class DystopiaConfig(SlottedModel):
     poll_seconds = Field(int, default=20)
     # Post individual kill events. OFF by default: a busy server would flood the channel.
     post_kills = Field(bool, default=True)
+    # Per-round threads: each LIVE round's feed goes into its own Discord thread hung off a round-start
+    # header in the channel (kills/captures/round-end land in the thread), keeping the channel a clean
+    # index. Backfilled/old rounds still post flat. Only admins can post in these threads by channel
+    # perms, which also sets up the future Discord->server chat bridge.
+    thread_per_round = Field(bool, default=True)
     # Kills are BATCHED: instead of one message per kill, they're buffered and flushed as combined
     # message(s) on this cadence (seconds). Non-kill events (round start/end, captures) still post on
     # the normal poll cadence. The buffer is also flushed on round-end and on plugin unload/shutdown.
