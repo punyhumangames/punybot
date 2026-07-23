@@ -228,7 +228,9 @@ class DystopiaPlugin(Plugin):
     # -- per-round threading ---------------------------------------------------------------------
 
     def _threads_enabled(self):
-        return bool(getattr(CONFIG.dystopia, "thread_per_round", True))
+        # Default ON: only an explicit `false` disables. A config Field that resolves to None
+        # (key absent, default not materialized) must NOT silently turn threading off.
+        return getattr(CONFIG.dystopia, "thread_per_round", True) is not False
 
     def _event_is_live(self, event):
         """True if this event is recent enough to thread (i.e. real-time, not a backfill replay)."""
@@ -295,6 +297,7 @@ class DystopiaPlugin(Plugin):
                 thread = self.bot.client.api.channels_messages_threads_create(
                     base, msg.id, self._thread_name(event), auto_archive_duration=THREAD_AUTO_ARCHIVE)
                 self._remember_thread(rid, thread.id)
+                self.log.info("[dystopia] opened round thread %s for round %s in channel %s", thread.id, rid, base)
             except Exception as e:
                 # Header is already up; the round just won't have a thread (events post flat).
                 self.log.error("[dystopia] thread create failed for round %s: %s", rid, e)
@@ -702,16 +705,21 @@ class DystopiaPlugin(Plugin):
                 # so this round's kills - buffered right below - already resolve to the thread, and it
                 # exists before the round-end flush. Backfilled/old round_starts fall through and post
                 # flat (and collapse into the backfill summary) exactly as before.
-                if (e.get("kind") == "round_start" and self._threads_enabled()
-                        and self._event_is_live(e)):
-                    eid = e.get("id")
-                    if eid and eid in self._seen_set:
-                        continue
-                    if self._open_round_thread(e):
-                        if eid:
-                            self._mark_seen(eid)
-                        continue
-                    # header didn't post; fall through to post it flat via _postable
+                if e.get("kind") == "round_start":
+                    en, live = self._threads_enabled(), self._event_is_live(e)
+                    if en and live:
+                        eid = e.get("id")
+                        if eid and eid in self._seen_set:
+                            continue
+                        if self._open_round_thread(e):
+                            if eid:
+                                self._mark_seen(eid)
+                            continue
+                        # header didn't post; fall through to post it flat via _postable
+                    else:
+                        # Diagnostic: say WHY a round wasn't threaded (config off, or backfill/old).
+                        self.log.info("[dystopia] round_start %s posted flat (threads_enabled=%s live=%s age=%ss)",
+                                      e.get("roundId"), en, live, self._cursor_age_seconds(e.get("cursor")))
                 if e.get("kind") == "round_end":
                     saw_round_end = True
                 p = self._postable(e)
