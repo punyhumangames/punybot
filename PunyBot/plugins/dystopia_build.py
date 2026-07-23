@@ -158,7 +158,8 @@ class DystopiaBuildPlugin(Plugin):
                 run_ok = all(t.get("status") == "success" for t in siblings)
                 try:
                     self.bot.client.api.channels_messages_create(
-                        CONFIG.dystopia_build.channel_id, content=self._format(task, run_final and run_ok))
+                        CONFIG.dystopia_build.channel_id, content=self._format(task, run_final and run_ok),
+                        allowed_mentions={"parse": []})
                 except Exception:
                     self.log.exception("[dystopia_build] post failed for task %s; retrying next tick", task["id"])
                     break

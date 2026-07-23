@@ -45,8 +45,8 @@ media:
     # ID [Can be the server id of the guild, a name, etc.]:
     #   url: The Webhook URL of where the content will be served. Obtained via creating a webhook in the server settings.
     #         Typically, in the format of "https://discord.com/api/webhooks/ID/TOKEN" The portion that goes in the field is "ID/TOKEN"
-    #         Example URL: https://discord.com/api/webhooks/991465159061151765/KNP6Q4GZ0n_vY4aSh13OIz2LDv9WT3CDbuv3PkaXdP0-Q7JlicyM9GKPGlULJb9xzKlb
-    #         The value would be "991465159061151765/KNP6Q4GZ0n_vY4aSh13OIz2LDv9WT3CDbuv3PkaXdP0-Q7JlicyM9GKPGlULJb9xzKlb"
+    #         Example URL: https://discord.com/api/webhooks/000000000000000000/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+    #         The value would be "000000000000000000/XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
     #   following: a list of Twitter handles that will be served to that particular webhook. Example: ["PunyHuman", "TwitterDev"] or simply ["TwitterDev"]
     TestServer:
       url: "ID/TOKEN"

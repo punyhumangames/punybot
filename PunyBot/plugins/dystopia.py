@@ -228,8 +228,8 @@ class DystopiaPlugin(Plugin):
         """Return the message string for an event, or None to skip (e.g. kills when disabled)."""
         cfg = CONFIG.dystopia
         kind = event.get("kind")
-        game_map = event.get("mapName") or "unknown"
-        server = event.get("serverName") or "a Dystopia server"
+        game_map = self._escape_md(event.get("mapName") or "unknown")
+        server = self._escape_md(event.get("serverName") or "a Dystopia server")
         round_id = event.get("roundId")
         round_url = f"{self.feed_url}/round/{round_id}"
         actor = event.get("actor") or {}
@@ -247,8 +247,8 @@ class DystopiaPlugin(Plugin):
 
         if kind == "capture":
             return self._tpl("dystopia_capture").format(
-                player=actor.get("name") or "Someone",
-                objective=event.get("objective") or "an objective",
+                player=self._escape_md(actor.get("name") or "Someone"),
+                objective=self._escape_md(event.get("objective") or "an objective"),
                 map=game_map,
                 round_id=round_id,
                 round_url=round_url,
@@ -360,7 +360,10 @@ class DystopiaPlugin(Plugin):
         # command-hook registry dicts, which would shadow the method (self._post(...) -> dict call ->
         # TypeError). Same reason to avoid `_pre`, `commands`, `listeners`, `schedules`, `_events`.
         try:
-            self.bot.client.api.channels_messages_create(channel_id, content=content)
+            # allowed_mentions parse:[] is a hard server-side guarantee that no relay/build
+            # post can ever ping (@everyone/@here/@user/role), independent of content escaping.
+            self.bot.client.api.channels_messages_create(
+                channel_id, content=content, allowed_mentions={"parse": []})
             return True
         except Exception as e:
             self.log.error("[dystopia] Failed to post to channel %s: %s", channel_id, e)
@@ -413,11 +416,18 @@ class DystopiaPlugin(Plugin):
         while i < n:
             channel_id = entries[i][1]
             j, size = i, 0
-            while (j < n and entries[j][1] == channel_id and (j - i) < BATCH_MAX_LINES
-                   and size + len(entries[j][2]) + 1 <= BATCH_CHAR_LIMIT):
-                size += len(entries[j][2]) + 1
+            while j < n and entries[j][1] == channel_id and (j - i) < BATCH_MAX_LINES:
+                add = len(entries[j][2]) + 1
+                # Always take at least the first entry (j == i) so we can't stall; only the
+                # size cap can stop us, and only after one line is in the chunk.
+                if j > i and size + add > BATCH_CHAR_LIMIT:
+                    break
+                size += add
                 j += 1
-            yield channel_id, "\n".join(e[2] for e in entries[i:j]), entries[i:j]
+            content = "\n".join(e[2] for e in entries[i:j])
+            if len(content) > BATCH_CHAR_LIMIT:
+                content = content[:BATCH_CHAR_LIMIT]  # lone oversized entry: hard-cap so Discord accepts it
+            yield channel_id, content, entries[i:j]
             i = j
 
     def flush_kills(self):
